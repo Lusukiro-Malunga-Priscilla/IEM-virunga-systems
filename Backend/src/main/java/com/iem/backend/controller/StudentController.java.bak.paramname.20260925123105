@@ -1,0 +1,211 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.model.Section;
+import com.iem.backend.model.Student;
+import com.iem.backend.service.StudentService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/api/students")
+@CrossOrigin(origins = {
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:5174"
+})
+public class StudentController {
+
+    private static final Logger logger = LoggerFactory.getLogger(StudentController.class);
+
+    private final StudentService studentService;
+
+    public StudentController(StudentService studentService) {
+        this.studentService = studentService;
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ GET /api/students â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @GetMapping
+    public ResponseEntity<?> getAllStudents() {
+        try {
+            List<Student> students = studentService.findAll();
+            logger.info("GET /api/students - Returning {} students", students.size());
+            return ResponseEntity.ok(students);
+        } catch (Exception e) {
+            logger.error("Error fetching students: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to fetch students: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ GET /api/students/sections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @GetMapping("/sections")
+    public ResponseEntity<?> getSectionOptions() {
+        try {
+            List<Map<String, String>> sections = Section.getAllSections().stream()
+                    .map(section -> {
+                        Map<String, String> m = new HashMap<>();
+                        m.put("value", section.name());
+                        m.put("displayName", section.getDisplayName());
+                        return m;
+                    })
+                    .collect(Collectors.toList());
+            return ResponseEntity.ok(Map.of("sections", sections));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to get sections: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ GET /api/students/count â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @GetMapping("/count")
+    public ResponseEntity<?> countStudents() {
+        try {
+            return ResponseEntity.ok(Map.of("count", studentService.countStudents()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error counting students: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ POST /api/students â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @PostMapping
+    public ResponseEntity<?> createStudent(@RequestBody Student student) {
+        try {
+            if (student.getFullName() == null || student.getFullName().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Full name is required."));
+            }
+            if (student.getEmail() == null || student.getEmail().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Email is required."));
+            }
+            if (student.getSection() == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Section is required."));
+            }
+            if (student.getRegistrationNumber() != null && !student.getRegistrationNumber().isEmpty()
+                    && studentService.findByRegistrationNumber(student.getRegistrationNumber()).isPresent()) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(Map.of("error", "Student with registration number '" + student.getRegistrationNumber() + "' already exists."));
+            }
+            if (studentService.findByEmail(student.getEmail()).isPresent()) {
+                return ResponseEntity.status(HttpStatus.CONFLICT)
+                        .body(Map.of("error", "Student with email '" + student.getEmail() + "' already exists."));
+            }
+
+            Student saved = studentService.save(student);
+            return ResponseEntity.status(HttpStatus.CREATED).body(saved);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Error creating student: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error creating student: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ GET /api/students/{id} â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @GetMapping("/{id}")
+    public ResponseEntity<?> getStudent(@PathVariable Long id) {
+        try {
+            return studentService.findById(id)
+                    .map(ResponseEntity::ok)
+                    .orElse(ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to fetch student: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ PUT /api/students/{id} â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateStudent(@PathVariable Long id, @RequestBody Student update) {
+        try {
+            if (studentService.findById(id).isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+            return ResponseEntity.ok(studentService.update(id, update));
+        } catch (Exception e) {
+            logger.error("Error updating student: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error updating student: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ DELETE /api/students/{id} â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteStudent(@PathVariable Long id) {
+        try {
+            if (studentService.findById(id).isEmpty()) {
+                return ResponseEntity.notFound().build();
+            }
+            studentService.deactivate(id);
+            return ResponseEntity.noContent().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error deleting student: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ POST /api/students/{id}/confirm-registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @PostMapping("/{id}/confirm-registration")
+    public ResponseEntity<?> confirmRegistration(@PathVariable Long id) {
+        try {
+            return ResponseEntity.ok(studentService.confirmRegistration(id));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error confirming registration: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ GET /api/students/search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @GetMapping("/search")
+    public ResponseEntity<?> searchStudents(@RequestParam String name) {
+        try {
+            return ResponseEntity.ok(studentService.searchByName(name));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to search students: " + e.getMessage()));
+        }
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ GET /api/students/export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> exportStudents() {
+        String csv = studentService.exportToCsv();
+        byte[] bytes = ("\uFEFF" + csv).getBytes(StandardCharsets.UTF_8);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/csv; charset=UTF-8"));
+        headers.setContentDispositionFormData("attachment", "eleves.csv");
+
+        return new ResponseEntity<>(bytes, headers, HttpStatus.OK);
+    }
+
+    // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ POST /api/students/import â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    @PostMapping("/import")
+    public ResponseEntity<?> importStudents(@RequestParam("file") MultipartFile file) {
+        try {
+            if (file.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Aucun fichier reÃ§u."));
+            }
+            StudentService.ImportResult result = studentService.importFromCsv(file);
+            Map<String, Object> response = new HashMap<>();
+            response.put("imported", result.imported);
+            response.put("errors", result.errors);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Erreur lors de l'import: " + e.getMessage()));
+        }
+    }
+}

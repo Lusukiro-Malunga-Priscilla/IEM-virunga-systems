@@ -1,0 +1,129 @@
+package com.iem.backend.config;
+
+import com.iem.backend.model.Employee;
+import com.iem.backend.model.Role;
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.EmployeeRepository;
+import com.iem.backend.repository.UserAccountRepository;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+@Configuration
+public class DataLoader {
+
+    @Bean
+    // DISABLED-BY-USER: seeding removed`r`n    // public CommandLineRunner loadData(UserAccountRepository userRepository, 
+                                      EmployeeRepository employeeRepository,
+                                      PasswordEncoder passwordEncoder) {
+        return args -> {
+            // Create default users if they don't exist
+            
+            // 1. Admin User
+            if (!userRepository.findByUsername("admin@iem.com").isPresent()) {
+                UserAccount admin = new UserAccount();
+                admin.setUsername("admin@iem.com");
+                admin.setPassword(passwordEncoder.encode("Admin@2026"));
+                admin.setRole(Role.ADMIN);
+                admin.setEnabled(true);
+                userRepository.save(admin);
+                
+                Employee adminEmp = new Employee();
+                adminEmp.setEmail("admin@iem.com");
+                adminEmp.setFirstName("Admin");
+                adminEmp.setLastName("User");
+                adminEmp.setPosition("System Administrator");
+                adminEmp.setStatus("ACTIVE");
+                adminEmp.setUserAccount(admin);
+                employeeRepository.save(adminEmp);
+                
+                System.out.println("âœ… Created admin user: admin@iem.com / Admin@2026");
+            }
+
+            // 2. School User
+            if (!userRepository.findByUsername("iemvirunga96@gmail.com").isPresent()) {
+                UserAccount school = new UserAccount();
+                school.setUsername("iemvirunga96@gmail.com");
+                school.setPassword(passwordEncoder.encode("IemVirunga2026!"));
+                school.setRole(Role.ADMIN);
+                school.setEnabled(true);
+                userRepository.save(school);
+                
+                Employee schoolEmp = new Employee();
+                schoolEmp.setEmail("iemvirunga96@gmail.com");
+                schoolEmp.setFirstName("School");
+                schoolEmp.setLastName("Administrator");
+                schoolEmp.setPosition("School Administrator");
+                schoolEmp.setStatus("ACTIVE");
+                schoolEmp.setUserAccount(school);
+                employeeRepository.save(schoolEmp);
+                
+                System.out.println("âœ… Created school user: iemvirunga96@gmail.com / IemVirunga2026!");
+            }
+
+            // 3. Teacher User
+            if (!userRepository.findByUsername("teacher@iem.com").isPresent()) {
+                UserAccount teacher = new UserAccount();
+                teacher.setUsername("teacher@iem.com");
+                teacher.setPassword(passwordEncoder.encode("Teacher@2026"));
+                teacher.setRole(Role.TEACHER);
+                teacher.setEnabled(true);
+                userRepository.save(teacher);
+                
+                Employee teacherEmp = new Employee();
+                teacherEmp.setEmail("teacher@iem.com");
+                teacherEmp.setFirstName("Jane");
+                teacherEmp.setLastName("Teacher");
+                teacherEmp.setPosition("Teacher");
+                teacherEmp.setStatus("ACTIVE");
+                teacherEmp.setUserAccount(teacher);
+                employeeRepository.save(teacherEmp);
+                
+                System.out.println("âœ… Created teacher user: teacher@iem.com / Teacher@2026");
+            }
+
+            // 4. Titulaire User
+            if (!userRepository.findByUsername("titulaire@iem.com").isPresent()) {
+                UserAccount titulaire = new UserAccount();
+                titulaire.setUsername("titulaire@iem.com");
+                titulaire.setPassword(passwordEncoder.encode("Titulaire@2026"));
+                titulaire.setRole(Role.TITULAIRE);
+                titulaire.setEnabled(true);
+                userRepository.save(titulaire);
+                
+                Employee titulaireEmp = new Employee();
+                titulaireEmp.setEmail("titulaire@iem.com");
+                titulaireEmp.setFirstName("John");
+                titulaireEmp.setLastName("Titulaire");
+                titulaireEmp.setPosition("Class Teacher");
+                titulaireEmp.setStatus("ACTIVE");
+                titulaireEmp.setUserAccount(titulaire);
+                employeeRepository.save(titulaireEmp);
+                
+                System.out.println("âœ… Created titulaire user: titulaire@iem.com / Titulaire@2026");
+            }
+
+            // 5. Student User
+            if (!userRepository.findByUsername("student@iem.com").isPresent()) {
+                UserAccount student = new UserAccount();
+                student.setUsername("student@iem.com");
+                student.setPassword(passwordEncoder.encode("Student@2026"));
+                student.setRole(Role.STUDENT);
+                student.setEnabled(true);
+                userRepository.save(student);
+                
+                System.out.println("âœ… Created student user: student@iem.com / Student@2026");
+            }
+
+            System.out.println("=========================================");
+            System.out.println("ðŸ“‹ Default Users Created:");
+            System.out.println("  Admin:      admin@iem.com / Admin@2026");
+            System.out.println("  School:     iemvirunga96@gmail.com / IemVirunga2026!");
+            System.out.println("  Teacher:    teacher@iem.com / Teacher@2026");
+            System.out.println("  Titulaire:  titulaire@iem.com / Titulaire@2026");
+            System.out.println("  Student:    student@iem.com / Student@2026");
+            System.out.println("=========================================");
+        };
+    }
+}

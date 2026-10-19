@@ -1,0 +1,27 @@
+// StudentRepository.java
+package com.iem.backend.repository;
+
+import com.iem.backend.model.Section;
+import com.iem.backend.model.Student;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+import java.time.LocalDate;
+
+@Repository
+public interface StudentRepository extends JpaRepository<Student, Long> {
+    Optional<Student> findByRegistrationNumber(String registrationNumber);
+    Optional<Student> findByEmail(String email);
+    List<Student> findBySection(Section section);
+    long countBySection(Section section);
+    List<Student> findByStudentClass(String studentClass);
+    Optional<Student> findByUserAccountId(Long userAccountId);
+
+    @Query("SELECT s FROM Student s WHERE LOWER(s.fullName) LIKE LOWER(CONCAT('%', :name, '%')) OR LOWER(s.registrationNumber) LIKE LOWER(CONCAT('%', :name, '%'))")
+    List<Student> searchByName(String name);
+
+    Optional<Student> findByFullNameAndDateOfBirth(String fullName, LocalDate dateOfBirth);
+}

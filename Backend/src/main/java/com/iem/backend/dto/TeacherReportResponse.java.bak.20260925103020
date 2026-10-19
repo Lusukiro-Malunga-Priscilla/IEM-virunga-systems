@@ -1,0 +1,44 @@
+package com.iem.backend.dto;
+
+import com.iem.backend.model.TeacherReport;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+public class TeacherReportResponse {
+    public Long id;
+    public LocalDate reportDate;
+    public String summary;
+    public String classesTaught;
+    public BigDecimal hoursWorked;
+    public String issues;
+    public String achievements;
+    public String status;
+    public Long teacherId;
+    public String teacherName;
+    public LocalDateTime createdAt;
+    public LocalDateTime updatedAt;
+
+    public static TeacherReportResponse from(TeacherReport r) {
+        TeacherReportResponse dto = new TeacherReportResponse();
+        dto.id = r.getId();
+        dto.reportDate = r.getReportDate();
+        dto.summary = r.getSummary();
+        dto.classesTaught = r.getClassesTaught();
+        dto.hoursWorked = r.getHoursWorked();
+        dto.issues = r.getIssues();
+        dto.achievements = r.getAchievements();
+        dto.status = r.getStatus();
+        dto.createdAt = r.getCreatedAt();
+        dto.updatedAt = r.getUpdatedAt();
+        if (r.getTeacher() != null) {
+            dto.teacherId = r.getTeacher().getId();
+            String fn = r.getTeacher().getFirstName();
+            String ln = r.getTeacher().getLastName();
+            dto.teacherName = ((fn == null ? "" : fn) + " " + (ln == null ? "" : ln)).trim();
+            if (dto.teacherName.isEmpty()) dto.teacherName = "Teacher #" + dto.teacherId;
+        }
+        return dto;
+    }
+}

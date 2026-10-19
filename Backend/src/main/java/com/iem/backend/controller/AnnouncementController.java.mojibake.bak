@@ -1,0 +1,93 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.model.Announcement;
+import com.iem.backend.model.AnnouncementReply;
+import com.iem.backend.service.AnnouncementService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/announcements")
+public class AnnouncementController {
+
+    private final AnnouncementService announcementService;
+
+    public AnnouncementController(AnnouncementService announcementService) {
+        this.announcementService = announcementService;
+    }
+
+    /** Full list â€” used by the admin management page. */
+    @GetMapping
+    public List<Announcement> getAnnouncements() {
+        return announcementService.findAll();
+    }
+
+    /**
+     * Role-scoped feed â€” used by the student / teacher / admin announcement pages.
+     * role is one of ADMIN, TEACHER, STUDENT.
+     */
+    @GetMapping("/for/{role}")
+    public List<Announcement> getAnnouncementsForRole(@PathVariable("role") String role) {
+        return announcementService.findVisibleFor(role);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Announcement> getAnnouncement(@PathVariable("id") Long id) {
+        try {
+            return ResponseEntity.ok(announcementService.findById(id));
+        } catch (Exception ex) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping
+    public Announcement createAnnouncement(@RequestBody Announcement announcement) {
+        return announcementService.saveAndNotify(announcement);
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<Announcement> updateAnnouncement(@PathVariable("id") Long id, @RequestBody Announcement update) {
+        try {
+            Announcement existing = announcementService.findById(id);
+            existing.setTitle(update.getTitle());
+            existing.setMessage(update.getMessage());
+            existing.setAudience(update.getAudience());
+            existing.setAllowReplies(update.isAllowReplies());
+            existing.setSendEmail(update.isSendEmail());
+            existing.setSendSms(update.isSendSms());
+            return ResponseEntity.ok(announcementService.saveAndNotify(existing));
+        } catch (Exception ex) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteAnnouncement(@PathVariable("id") Long id) {
+        try {
+            announcementService.findById(id);
+            announcementService.deleteById(id);
+            return ResponseEntity.noContent().<Void>build();
+        } catch (Exception ex) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @GetMapping("/{id}/replies")
+    public List<AnnouncementReply> getReplies(@PathVariable("id") Long id) {
+        return announcementService.findReplies(id);
+    }
+
+    @PostMapping("/{id}/replies")
+    public ResponseEntity<AnnouncementReply> postReply(@PathVariable("id") Long id, @RequestBody AnnouncementReply reply) {
+        try {
+            return ResponseEntity.ok(announcementService.addReply(id, reply));
+        } catch (IllegalStateException disabled) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        } catch (Exception notFound) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+}

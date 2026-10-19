@@ -1,0 +1,556 @@
+package com.iem.backend.service;
+
+import com.iem.backend.dto.ClassAttendanceCheckInRequest;
+import com.iem.backend.dto.ClassAttendanceEntryDto;
+import com.iem.backend.dto.DailyAttendanceBoxDto;
+import com.iem.backend.dto.StudentAttendanceSaveRequest;
+import com.iem.backend.model.Attendance;
+import com.iem.backend.model.Student;
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.AttendanceRepository;
+import com.iem.backend.repository.StudentRepository;
+import com.iem.backend.repository.UserAccountRepository;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+@Service
+public class AttendanceService {
+
+    /** School starts at 07:30 ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â anything checked in after this is LATE. */
+    public static final LocalTime SCHOOL_START_TIME = LocalTime.of(7, 30);
+
+    public static final String TYPE_STUDENT = "STUDENT";
+    public static final String TYPE_TEACHER = "TEACHER";
+
+    private final AttendanceRepository attendanceRepository;
+    private final UserAccountRepository userAccountRepository;
+    private final StudentRepository studentRepository;
+    private final EmailService emailService;
+    private final SmsService smsService;
+
+    public AttendanceService(AttendanceRepository attendanceRepository,
+                              UserAccountRepository userAccountRepository,
+                              StudentRepository studentRepository,
+                              EmailService emailService,
+                              SmsService smsService) {
+        this.attendanceRepository = attendanceRepository;
+        this.userAccountRepository = userAccountRepository;
+        this.studentRepository = studentRepository;
+        this.emailService = emailService;
+        this.smsService = smsService;
+    }
+
+    // ---------------------------------------------------------------
+    // Existing basic operations (kept, lightly hardened)
+    // ---------------------------------------------------------------
+
+    public List<Attendance> findAll() {
+        return attendanceRepository.findAll(Sort.by(Sort.Direction.DESC, "date", "checkInTime"));
+    }
+
+    public List<Attendance> findByUserId(Long userAccountId) {
+        return attendanceRepository.findByUserAccountId(userAccountId, Sort.by(Sort.Direction.DESC, "date", "checkInTime"));
+    }
+
+    /**
+     * Single check-in (kept for backward compatibility / API-driven check-in,
+     * e.g. a badge reader). Lateness is now ALWAYS recomputed from the actual
+     * check-in time against 07:30, on top of whatever flag was passed in.
+     */
+    public Attendance checkIn(String username, String attendeeType, String course, boolean lateHint, String justification) {
+        UserAccount account = userAccountRepository.findByUsername(username).orElseThrow();
+        LocalDateTime now = LocalDateTime.now();
+
+        Attendance attendance = new Attendance();
+        attendance.setDate(now.toLocalDate());
+        attendance.setCheckInTime(now);
+        attendance.setPresent(true);
+        attendance.setLate(lateHint || isAfterSchoolStart(now));
+        attendance.setJustification(justification);
+        attendance.setAttendeeType(attendeeType);
+        attendance.setCourse(course);
+        attendance.setUserAccount(account);
+
+        Attendance saved = attendanceRepository.save(attendance);
+
+        if (TYPE_STUDENT.equalsIgnoreCase(attendeeType)) {
+            notifyStudent(account, saved);
+        }
+
+        return saved;
+    }
+
+    public Attendance checkOut(Long id) {
+        Attendance attendance = attendanceRepository.findById(id).orElseThrow();
+        attendance.setCheckOutTime(LocalDateTime.now());
+        return attendanceRepository.save(attendance);
+    }
+
+    // ---------------------------------------------------------------
+    // Teacher pointing his own class (morning roll call)
+    // ---------------------------------------------------------------
+
+    /**
+     * Called once when the teacher finishes clicking through the class list
+     * and hits "Enregistrer". Saves one Attendance row per student, marks
+     * lateness automatically, and notifies each present student by
+     * email + SMS. Students not included in the request (or included with
+     * present=false) are simply not saved as present ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â they'll show up as
+     * ABSENT / NOT_MARKED on the admin board (see getDailyBoard below).
+     */
+    public List<Attendance> classCheckIn(ClassAttendanceCheckInRequest request) {
+        LocalDate date = request.getDate() != null ? request.getDate() : LocalDate.now();
+        LocalDateTime now = LocalDateTime.now();
+        List<Attendance> saved = new ArrayList<>();
+
+        for (ClassAttendanceEntryDto entry : request.getEntries()) {
+            if (!entry.isPresent()) {
+                // Explicitly marked absent: still record it so the admin board
+                // and the student's own history show ABSENT rather than nothing.
+                UserAccount student = userAccountRepository.findById(entry.getStudentUserAccountId()).orElseThrow();
+                Attendance absentRow = new Attendance();
+                absentRow.setDate(date);
+                absentRow.setPresent(false);
+                absentRow.setLate(false);
+                absentRow.setJustification(entry.getJustification());
+                absentRow.setAttendeeType(TYPE_STUDENT);
+                absentRow.setCourse(request.getCourse());
+                absentRow.setUserAccount(student);
+                saved.add(attendanceRepository.save(absentRow));
+                continue;
+            }
+
+            UserAccount student = userAccountRepository.findById(entry.getStudentUserAccountId()).orElseThrow();
+            LocalDateTime checkInTime = date.isEqual(LocalDate.now()) ? now : date.atTime(SCHOOL_START_TIME);
+            boolean late = entry.isLate() || isAfterSchoolStart(checkInTime);
+
+            Attendance attendance = new Attendance();
+            attendance.setDate(date);
+            attendance.setCheckInTime(checkInTime);
+            attendance.setPresent(true);
+            attendance.setLate(late);
+            attendance.setJustification(entry.getJustification());
+            attendance.setAttendeeType(TYPE_STUDENT);
+            attendance.setCourse(request.getCourse());
+            attendance.setUserAccount(student);
+
+            Attendance savedRow = attendanceRepository.save(attendance);
+            saved.add(savedRow);
+
+            notifyStudent(student, savedRow);
+        }
+
+        return saved;
+    }
+
+    // ---------------------------------------------------------------
+    // Teacher's own presence
+    // ---------------------------------------------------------------
+
+    public Attendance teacherSelfCheckIn(String teacherUsername) {
+        UserAccount teacher = userAccountRepository.findByUsername(teacherUsername).orElseThrow();
+        LocalDate today = LocalDate.now();
+
+        // Avoid double check-in for the same day.
+        List<Attendance> existing = attendanceRepository.findByUserAccountIdAndDate(teacher.getId(), today);
+        if (!existing.isEmpty()) {
+            return existing.get(0);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        Attendance attendance = new Attendance();
+        attendance.setDate(today);
+        attendance.setCheckInTime(now);
+        attendance.setPresent(true);
+        attendance.setLate(isAfterSchoolStart(now));
+        attendance.setAttendeeType(TYPE_TEACHER);
+        attendance.setUserAccount(teacher);
+
+        return attendanceRepository.save(attendance);
+    }
+
+    // ---------------------------------------------------------------
+    // Admin daily board (the green/orange/red boxes)
+    // ---------------------------------------------------------------
+
+    /**
+     * Builds the box list for a given day, from whatever has actually been
+     * saved (present + absent rows). This alone is enough to show every
+     * teacher's daily board (green = present, orange = late, red = absent).
+     *
+     * NOTE: if you want students who were never clicked at all (no row saved)
+     * to also show up as a grey "NOT_MARKED" box, pass the class roster to
+     * the overload below ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â this project's UserAccount/course model wasn't
+     * shown to me, so wire that roster lookup to your own StudentRepository
+     * (e.g. findByRoleAndCourse(...)).
+     */
+    public List<DailyAttendanceBoxDto> getDailyBoard(LocalDate date, String course, String attendeeType) {
+        List<Attendance> rows = (course != null && !course.isBlank())
+                ? attendanceRepository.findByCourseIgnoreCaseAndDate(course, date, Sort.by("checkInTime"))
+                : attendanceRepository.findByDate(date, Sort.by("checkInTime"));
+
+        return rows.stream()
+                .filter(a -> attendeeType == null || attendeeType.equalsIgnoreCase(a.getAttendeeType()))
+                .map(this::toBoxDto)
+                .collect(Collectors.toList());
+    }
+
+    /** Overload that also fills in grey NOT_MARKED boxes for roster members with no row yet. */
+    public List<DailyAttendanceBoxDto> getDailyBoard(LocalDate date, String course, String attendeeType,
+                                                       List<UserAccount> roster) {
+        List<DailyAttendanceBoxDto> marked = getDailyBoard(date, course, attendeeType);
+        Map<Long, DailyAttendanceBoxDto> byUser = marked.stream()
+                .collect(Collectors.toMap(DailyAttendanceBoxDto::getUserAccountId, dto -> dto, (a, b) -> a));
+
+        List<DailyAttendanceBoxDto> result = new ArrayList<>(marked);
+        for (UserAccount user : roster) {
+            if (!byUser.containsKey(user.getId())) {
+                result.add(new DailyAttendanceBoxDto(user.getId(), fullName(user), "NOT_MARKED",
+                        null, null, null, course));
+            }
+        }
+        return result;
+    }
+
+    // ---------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------
+
+    private boolean isAfterSchoolStart(LocalDateTime dateTime) {
+        return dateTime.toLocalTime().isAfter(SCHOOL_START_TIME);
+    }
+
+    private DailyAttendanceBoxDto toBoxDto(Attendance a) {
+        String status;
+        if (!a.isPresent()) {
+            status = "ABSENT";
+        } else if (a.isLate()) {
+            status = "LATE";
+        } else {
+            status = "PRESENT";
+        }
+        UserAccount u = a.getUserAccount();
+        return new DailyAttendanceBoxDto(
+                u != null ? u.getId() : null,
+                u != null ? fullName(u) : "?",
+                status,
+                a.getCheckInTime(),
+                a.getCheckOutTime(),
+                a.getJustification(),
+                a.getCourse());
+    }
+
+    /**
+     * ADAPT ME: uses getFirstName()/getLastName() ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â rename to match your
+     * actual UserAccount entity's getters if they differ.
+     */
+    private String fullName(UserAccount u) {
+        if (u == null) return "Eleve";
+        try {
+            java.util.Optional<Student> s = studentRepository.findByUserAccountId(u.getId());
+            if (s.isPresent() && s.get().getFullName() != null && !s.get().getFullName().isBlank()) {
+                return s.get().getFullName();
+            }
+        } catch (Exception ignored) {}
+        try {
+            String fn = u.getFirstName();
+            String ln = u.getLastName();
+            String combined = ((fn != null ? fn : "") + " " + (ln != null ? ln : "")).trim();
+            if (!combined.isBlank()) return combined;
+        } catch (Exception ignored) {}
+        return u.getUsername() != null ? u.getUsername() : "Eleve";
+    }
+
+    /**
+     * Sends the "your child checked in" notification by email + SMS.
+     * ADAPT ME: uses getEmail()/getPhoneNumber() ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â rename to match your
+     * actual UserAccount entity's getters if they differ.
+     */
+    private void notifyStudent(UserAccount student, Attendance attendance) {
+        String status = attendance.isLate() ? "EN RETARD" : "PRÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°SENT";
+        String time = attendance.getCheckInTime() != null
+                ? attendance.getCheckInTime().toLocalTime().toString()
+                : "";
+
+        String subject = "PrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©sence enregistrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©e - " + fullName(student);
+        StringBuilder body = new StringBuilder();
+        body.append("Bonjour,\n\n")
+                .append(fullName(student)).append(" a ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© marquÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©(e) ").append(status)
+                .append(" aujourd'hui ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  ").append(time).append(".\n");
+        if (attendance.isLate()) {
+            body.append("L'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©cole commence ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  07h30. Une justification ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©crite du retard est requise ")
+                    .append("et doit ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âªtre remise ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  l'administration.\n");
+        }
+        body.append("\nÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°cole IEM Virunga");
+
+        try {
+            String email = student.getEmail();
+            if (email != null && !email.isBlank()) {
+                emailService.sendSimpleMessage(email, subject, body.toString());
+            }
+        } catch (Exception ex) {
+            // Never let a notification failure break the attendance save.
+        }
+
+        try {
+            String phone = student.getPhoneNumber();
+            if (phone != null && !phone.isBlank()) {
+                String smsText = fullName(student) + " : " + status + " ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  " + time
+                        + (attendance.isLate() ? " (justification requise, cours dÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©bute ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â  07h30)" : "");
+                smsService.sendSms(phone, smsText);
+            }
+        } catch (Exception ex) {
+            // Same ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â SMS gateway hiccups shouldn't fail the attendance save.
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Teacher attendance: classes, roster, save
+    // ---------------------------------------------------------------
+
+    public Map<String, Object> listClasses() {
+        List<Student> all = studentRepository.findAll();
+        List<Map<String, String>> classes = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+
+        for (Student s : all) {
+            if (s.getStudentClass() == null || s.getStudentClass().isBlank()) continue;
+            String sectionName = s.getSection() != null ? s.getSection().name() : "";
+            String key = s.getStudentClass() + "|" + sectionName;
+            if (seen.contains(key)) continue;
+            seen.add(key);
+
+            Map<String, String> row = new HashMap<>();
+            row.put("value", s.getStudentClass());
+            row.put("section", sectionName);
+            row.put("sectionLabel", s.getSection() != null ? s.getSection().getDisplayName() : sectionName);
+            classes.add(row);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("classes", classes);
+        return result;
+    }
+
+    public Map<String, Object> getRoster(String studentClass, String section, LocalDate date) {
+        List<Student> students = studentRepository.findByStudentClass(studentClass);
+
+        // Filter by section if provided
+        if (section != null && !section.isBlank()) {
+            students = students.stream()
+                    .filter(s -> s.getSection() != null
+                            && s.getSection().name().equalsIgnoreCase(section))
+                    .toList();
+        }
+
+        List<Map<String, Object>> rows = new ArrayList<>();
+        Map<Long, String> existing = new HashMap<>();
+
+        for (Student s : students) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("id", s.getId());
+            row.put("registrationNumber", s.getRegistrationNumber());
+            row.put("fullName", s.getFullName());
+            row.put("email", s.getEmail());
+            row.put("phoneNumber", s.getPhoneNumber() != null ? s.getPhoneNumber() : s.getPhone());
+            rows.add(row);
+
+            // Look up existing attendance for this date (match by userAccountId if set)
+            if (s.getUserAccountId() != null) {
+                List<Attendance> existingRows =
+                        attendanceRepository.findByUserAccountIdAndDate(s.getUserAccountId(), date);
+                if (!existingRows.isEmpty()) {
+                    Attendance a = existingRows.get(0);
+                    String status = !a.isPresent() ? "ABSENT" : a.isLate() ? "LATE" : "PRESENT";
+                    existing.put(s.getId(), status);
+                }
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("students", rows);
+        result.put("existingAttendance", existing);
+        return result;
+    }
+
+    public Map<String, Object> saveStudentAttendance(StudentAttendanceSaveRequest request) {
+        LocalDate date = request.getDate() != null ? request.getDate() : LocalDate.now();
+        String course = request.getStudentClass()
+                + (request.getSection() != null ? " - " + request.getSection() : "");
+        List<Attendance> saved = new ArrayList<>();
+
+        if (request.getRecords() == null) {
+            return Map.of("saved", 0);
+        }
+
+        for (StudentAttendanceSaveRequest.Record rec : request.getRecords()) {
+            Student student = studentRepository.findById(rec.getStudentId()).orElse(null);
+            if (student == null || student.getUserAccountId() == null) continue;
+
+            UserAccount account = userAccountRepository.findById(student.getUserAccountId()).orElse(null);
+            if (account == null) continue;
+
+            boolean present = !"ABSENT".equalsIgnoreCase(rec.getStatus());
+            boolean late = "LATE".equalsIgnoreCase(rec.getStatus());
+
+            // Delete existing record for that day (idempotent save)
+            List<Attendance> existing =
+                    attendanceRepository.findByUserAccountIdAndDate(account.getId(), date);
+            existing.forEach(attendanceRepository::delete);
+
+            Attendance a = new Attendance();
+            a.setDate(date);
+            a.setPresent(present);
+            a.setLate(late);
+            a.setJustification(rec.getJustification());
+            a.setAttendeeType(TYPE_STUDENT);
+            a.setCourse(course);
+            a.setUserAccount(account);
+            if (present) {
+                a.setCheckInTime(date.atTime(LocalTime.now().getHour(), LocalTime.now().getMinute()));
+            }
+
+            saved.add(attendanceRepository.save(a));
+            if (present) {
+                notifyStudent(account, a);
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("saved", saved.size());
+        return result;
+    }
+
+    public Map<String, Object> getBoardByClass(LocalDate date, String attendeeType) {
+        List<Attendance> all = attendanceRepository.findByDate(date, Sort.by("checkInTime"));
+
+        // Filter by attendee type if provided
+        if (attendeeType != null && !attendeeType.isBlank()) {
+            all = all.stream()
+                    .filter(a -> attendeeType.equalsIgnoreCase(a.getAttendeeType()))
+                    .toList();
+        }
+
+        // Group by class (from the linked student's studentClass + section)
+        Map<String, Map<String, Object>> groups = new java.util.LinkedHashMap<>();
+
+        for (Attendance a : all) {
+            UserAccount u = a.getUserAccount();
+            if (u == null) continue;
+
+            Student student = null;
+            try {
+                student = studentRepository.findByUserAccountId(u.getId()).orElse(null);
+            } catch (Exception ignored) {}
+
+            String studentClass = student != null && student.getStudentClass() != null
+                    ? student.getStudentClass() : "Sans classe";
+            String sectionName = student != null && student.getSection() != null
+                    ? student.getSection().name() : "";
+            String sectionLabel = student != null && student.getSection() != null
+                    ? student.getSection().getDisplayName() : sectionName;
+            String key = studentClass + "|" + sectionName;
+
+            Map<String, Object> group = groups.computeIfAbsent(key, k -> {
+                Map<String, Object> g = new java.util.LinkedHashMap<>();
+                g.put("studentClass", studentClass);
+                g.put("section", sectionName);
+                g.put("sectionLabel", sectionLabel);
+                g.put("total", 0);
+                g.put("present", 0);
+                g.put("late", 0);
+                g.put("absent", 0);
+                g.put("students", new ArrayList<Map<String, Object>>());
+                return g;
+            });
+
+            String status = !a.isPresent() ? "ABSENT" : a.isLate() ? "LATE" : "PRESENT";
+
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("userAccountId", u.getId());
+            row.put("fullName", fullName(u));
+            row.put("status", status);
+            row.put("checkInTime", a.getCheckInTime() != null
+                    ? a.getCheckInTime().toLocalTime().toString() : null);
+            row.put("justification", a.getJustification());
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> students = (List<Map<String, Object>>) group.get("students");
+            students.add(row);
+
+            group.put("total", ((Integer) group.get("total")) + 1);
+            if ("PRESENT".equals(status)) group.put("present", ((Integer) group.get("present")) + 1);
+            else if ("LATE".equals(status)) group.put("late", ((Integer) group.get("late")) + 1);
+            else group.put("absent", ((Integer) group.get("absent")) + 1);
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("date", date.toString());
+        result.put("classes", new ArrayList<>(groups.values()));
+        return result;
+    }
+
+    public Map<String, Object> getHistory(java.time.LocalDate from, java.time.LocalDate to,
+                                          String studentClass, String section) {
+        List<Attendance> all = attendanceRepository.findByDateBetween(from, to, Sort.by("date", "checkInTime"));
+
+        Map<String, Map<String, Object>> groups = new java.util.LinkedHashMap<>();
+        for (Attendance a : all) {
+            UserAccount u = a.getUserAccount();
+            if (u == null) continue;
+
+            Student s = null;
+            try { s = studentRepository.findByUserAccountId(u.getId()).orElse(null); } catch (Exception ignored) {}
+
+            String sc = s != null && s.getStudentClass() != null ? s.getStudentClass() : "Sans classe";
+            String sn = s != null && s.getSection() != null ? s.getSection().name() : "";
+            String sl = s != null && s.getSection() != null ? s.getSection().getDisplayName() : sn;
+
+            if (studentClass != null && !studentClass.isBlank() && !sc.equalsIgnoreCase(studentClass)) continue;
+            if (section != null && !section.isBlank() && !sn.equalsIgnoreCase(section)) continue;
+
+            String key = a.getDate().toString() + "|" + sc + "|" + sn;
+            final String fSc = sc, fSn = sn, fSl = sl;
+            Map<String, Object> g = groups.computeIfAbsent(key, k -> {
+                Map<String, Object> m = new java.util.LinkedHashMap<>();
+                m.put("date", a.getDate().toString());
+                m.put("studentClass", fSc);
+                m.put("section", fSn);
+                m.put("sectionLabel", fSl);
+                m.put("total", 0); m.put("present", 0); m.put("late", 0); m.put("absent", 0);
+                m.put("students", new ArrayList<Map<String, Object>>());
+                return m;
+            });
+
+            String status = !a.isPresent() ? "ABSENT" : a.isLate() ? "LATE" : "PRESENT";
+            Map<String, Object> row = new java.util.LinkedHashMap<>();
+            row.put("userAccountId", u.getId());
+            row.put("fullName", fullName(u));
+            row.put("status", status);
+            row.put("checkInTime", a.getCheckInTime() != null ? a.getCheckInTime().toString() : null);
+            row.put("justification", a.getJustification());
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> studs = (List<Map<String, Object>>) g.get("students");
+            studs.add(row);
+
+            g.put("total", ((Integer) g.get("total")) + 1);
+            if ("PRESENT".equals(status)) g.put("present", ((Integer) g.get("present")) + 1);
+            else if ("LATE".equals(status)) g.put("late", ((Integer) g.get("late")) + 1);
+            else g.put("absent", ((Integer) g.get("absent")) + 1);
+        }
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("classes", new ArrayList<>(groups.values()));
+        return out;
+    }
+}

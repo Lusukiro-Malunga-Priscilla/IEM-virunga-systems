@@ -1,0 +1,223 @@
+// package com.iem.backend.config;
+
+// import com.iem.backend.security.JwtAuthenticationFilter;
+// import com.iem.backend.service.UserService;
+// import org.springframework.beans.factory.annotation.Autowired;
+// import org.springframework.context.annotation.Bean;
+// import org.springframework.context.annotation.Configuration;
+// import org.springframework.context.annotation.Lazy;
+// import org.springframework.security.authentication.AuthenticationManager;
+// import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+// import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+// import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+// import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+// import org.springframework.security.config.http.SessionCreationPolicy;
+// import org.springframework.security.crypto.password.PasswordEncoder;
+// import org.springframework.security.web.SecurityFilterChain;
+// import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+// import org.springframework.web.cors.CorsConfiguration;
+// import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+// import org.springframework.web.filter.CorsFilter;
+
+// import java.util.Arrays;
+
+// @Configuration
+// @EnableWebSecurity
+// public class SecurityConfig {
+
+//     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+//     private final UserService userService;
+//     private final PasswordEncoder passwordEncoder;
+
+//     @Autowired
+//     public SecurityConfig(@Lazy JwtAuthenticationFilter jwtAuthenticationFilter,
+//                           UserService userService,
+//                           PasswordEncoder passwordEncoder) {
+//         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+//         this.userService = userService;
+//         this.passwordEncoder = passwordEncoder;
+//     }
+
+//     @Bean
+//     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+//         http
+//             .csrf(csrf -> csrf.disable())
+//             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+//             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+//             .authorizeHttpRequests(auth -> auth
+//                 // ── Auth endpoints: public ──
+//                 .requestMatchers("/api/auth/login").permitAll()
+//                 .requestMatchers("/api/auth/register").permitAll()
+//                 .requestMatchers("/api/auth/forgot-password").permitAll()
+//                 .requestMatchers("/api/auth/reset-password").permitAll()
+//                 .requestMatchers("/api/auth/verify-otp").permitAll()
+//                 .requestMatchers("/api/auth/check-email").permitAll()
+//                 .requestMatchers("/api/auth/**").permitAll()
+
+//                 // ── Teachers: public for now (dev) ──
+//                 .requestMatchers("/api/teachers/**").permitAll()
+
+//                 // ── Error page ──
+//                 .requestMatchers("/error").permitAll()
+
+//                 // ── Everything else needs a JWT ──
+//                 .anyRequest().authenticated()
+//             )
+//             .authenticationProvider(authenticationProvider())
+//             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+//         return http.build();
+//     }
+
+//     @Bean
+//     public CorsConfiguration corsConfiguration() {
+//         CorsConfiguration config = new CorsConfiguration();
+//         config.setAllowedOrigins(Arrays.asList(
+//             "http://localhost:3000",
+//             "http://localhost:5173",
+//             "http://localhost:5174",   // ← added (your current Vite port)
+//             "http://localhost:8080"
+//         ));
+//         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
+//         config.setAllowedHeaders(Arrays.asList("*"));
+//         config.setAllowCredentials(true);
+//         config.setExposedHeaders(Arrays.asList("Authorization", "Content-Disposition"));
+//         config.setMaxAge(3600L);
+//         return config;
+//     }
+
+//     @Bean
+//     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
+//         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+//         source.registerCorsConfiguration("/**", corsConfiguration());
+//         return source;
+//     }
+
+//     @Bean
+//     public DaoAuthenticationProvider authenticationProvider() {
+//         DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+//         provider.setUserDetailsService(userService);
+//         provider.setPasswordEncoder(passwordEncoder);
+//         return provider;
+//     }
+
+//     @Bean
+//     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+//         return config.getAuthenticationManager();
+//     }
+// }
+
+
+package com.iem.backend.config;
+
+import com.iem.backend.security.JwtAuthenticationFilter;
+import com.iem.backend.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.filter.CorsFilter;
+
+import java.util.Arrays;
+
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final UserService userService;
+    private final PasswordEncoder passwordEncoder;
+
+    @Autowired
+    public SecurityConfig(@Lazy JwtAuthenticationFilter jwtAuthenticationFilter,
+                          UserService userService,
+                          PasswordEncoder passwordEncoder) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.userService = userService;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf(csrf -> csrf.disable())
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .authorizeHttpRequests(auth -> auth
+                // ── CORS preflight: never block ──
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+
+                // ── Auth endpoints: public ──
+                .requestMatchers("/api/auth/**").permitAll()
+
+                // ── Teachers: public for now (dev) ──
+                .requestMatchers("/api/teachers/**").permitAll()
+
+                // ── Sections: read-only catalogue, allow any authenticated user ──
+                // (switch to .permitAll() if you want it public — e.g. signup forms)
+                .requestMatchers(HttpMethod.GET, "/api/sections/**").authenticated()
+
+                // ── Courses: authenticated users only ──
+                .requestMatchers("/api/courses/**").authenticated()
+
+                // ── Error page ──
+                .requestMatchers("/error").permitAll()
+
+                // ── Everything else needs a JWT ──
+                .anyRequest().authenticated()
+            )
+            .authenticationProvider(authenticationProvider())
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+
+        return http.build();
+    }
+
+    @Bean
+    public CorsConfiguration corsConfiguration() {
+        CorsConfiguration config = new CorsConfiguration();
+        config.setAllowedOrigins(Arrays.asList(
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://localhost:5174",   // ← your current Vite port
+            "http://localhost:8080"
+        ));
+        config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"));
+        config.setAllowedHeaders(Arrays.asList("*"));
+        config.setAllowCredentials(true);
+        config.setExposedHeaders(Arrays.asList("Authorization", "Content-Disposition"));
+        config.setMaxAge(3600L);
+        return config;
+    }
+
+    @Bean
+    public UrlBasedCorsConfigurationSource corsConfigurationSource() {
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", corsConfiguration());
+        return source;
+    }
+
+    @Bean
+    public DaoAuthenticationProvider authenticationProvider() {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(userService);
+        provider.setPasswordEncoder(passwordEncoder);
+        return provider;
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
+        return config.getAuthenticationManager();
+    }
+}

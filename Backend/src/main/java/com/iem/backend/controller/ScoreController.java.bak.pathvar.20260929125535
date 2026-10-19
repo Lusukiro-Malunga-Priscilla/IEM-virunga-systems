@@ -1,0 +1,54 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.model.ScoreRecord;
+import com.iem.backend.service.ScoreService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/scores")
+public class ScoreController {
+
+    private final ScoreService scoreService;
+
+    public ScoreController(ScoreService scoreService) {
+        this.scoreService = scoreService;
+    }
+
+    @GetMapping
+    public List<ScoreRecord> getAllScores() {
+        return scoreService.findAll();
+    }
+
+    @GetMapping("/student/{studentId}")
+    public List<ScoreRecord> getByStudent(@PathVariable Long studentId) {
+        return scoreService.findByStudentId(studentId);
+    }
+
+    @GetMapping("/course/{courseId}")
+    public List<ScoreRecord> getByCourse(@PathVariable Long courseId) {
+        return scoreService.findByCourseId(courseId);
+    }
+
+    @PostMapping
+    public ResponseEntity<ScoreRecord> recordScore(@RequestParam(name = "studentId") Long studentId,
+                                                   @RequestParam(name = "courseId") Long courseId,
+                                                   @RequestBody ScoreRecord scoreData) {
+        try {
+            return ResponseEntity.ok(scoreService.recordScore(studentId, courseId, scoreData));
+        } catch (Exception ex) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ScoreRecord> updateScore(@PathVariable Long id, @RequestBody ScoreRecord update) {
+        try {
+            return ResponseEntity.ok(scoreService.updateScore(id, update));
+        } catch (Exception ex) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+}

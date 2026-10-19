@@ -1,0 +1,329 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.model.Role;
+import com.iem.backend.model.Student;
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.StudentRepository;
+import com.iem.backend.repository.UserAccountRepository;
+import com.iem.backend.config.JwtUtil;
+import com.iem.backend.service.EmailService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Student self-service auth using Nom complet + Date de naissance.
+ *
+ * POST /api/auth/student/register     -> { fullName, dateOfBirth } -> sends OTP
+ * POST /api/auth/student/verify-otp   -> { email, otp, password }  -> activates account
+ * POST /api/auth/student/login        -> { fullName, password }    -> JWT
+ * POST /api/auth/student/forgot       -> { fullName }              -> sends OTP
+ * POST /api/auth/student/reset        -> { email, otp, password }  -> new password
+ */
+@RestController
+@RequestMapping("/api/auth/student")
+public class StudentAuthController {
+
+    private final StudentRepository studentRepo;
+    private final UserAccountRepository userRepo;
+    private final PasswordEncoder passwordEncoder;
+    private final EmailService emailService;
+    private final JwtUtil jwtUtil;
+
+    private static final Map<String, String> OTP_CODE = new HashMap<>();
+    private static final Map<String, Long>   OTP_EXP  = new HashMap<>();
+    private static final long OTP_TTL_MS = 10 * 60 * 1000L;
+
+    public StudentAuthController(StudentRepository studentRepo,
+                                 UserAccountRepository userRepo,
+                                 PasswordEncoder passwordEncoder,
+                                 EmailService emailService,
+                                 JwtUtil jwtUtil) {
+        this.studentRepo = studentRepo;
+        this.userRepo = userRepo;
+        this.passwordEncoder = passwordEncoder;
+        this.emailService = emailService;
+        this.jwtUtil = jwtUtil;
+    }
+
+    private static String sixDigit() {
+        return String.format("%06d", (int)(Math.random() * 1_000_000));
+    }
+    private static void putOtp(String email, String code) {
+        OTP_CODE.put(email, code);
+        OTP_EXP.put(email, System.currentTimeMillis() + OTP_TTL_MS);
+    }
+    private static boolean checkOtp(String email, String code) {
+        Long exp = OTP_EXP.get(email);
+        if (exp == null || System.currentTimeMillis() > exp) return false;
+        return code != null && code.equals(OTP_CODE.get(email));
+    }
+    private static void clearOtp(String email) {
+        OTP_CODE.remove(email);
+        OTP_EXP.remove(email);
+    }
+    private static String maskEmail(String email) {
+        int at = email.indexOf('@');
+        if (at <= 2) return "***" + email.substring(Math.max(at, 0));
+        return email.substring(0, 2) + "***" + email.substring(at);
+    }
+
+    /** Find a student by exact full name (case-insensitive) + exact DOB. */
+    private Optional<Student> findStudent(String fullName, LocalDate dob) {
+        if (fullName == null || dob == null) return Optional.empty();
+        String name = fullName.trim();
+        // First try the exact (name, dob) match
+        Optional<Student> exact = studentRepo.findByFullNameAndDateOfBirth(name, dob);
+        if (exact.isPresent()) return exact;
+        // Fallback: case-insensitive scan
+        return studentRepo.findAll().stream()
+                .filter(s -> s.getFullName() != null
+                          && s.getFullName().trim().equalsIgnoreCase(name)
+                          && dob.equals(s.getDateOfBirth()))
+                .findFirst();
+    }
+
+    /** Find by full name only (for login / forgot where we don't have DOB). */
+    private Optional<Student> findStudentByName(String fullName) {
+        if (fullName == null) return Optional.empty();
+        String name = fullName.trim();
+        return studentRepo.findAll().stream()
+                .filter(s -> s.getFullName() != null
+                          && s.getFullName().trim().equalsIgnoreCase(name))
+                .findFirst();
+    }
+
+    // -------------------------------------------------------------
+    // REGISTER  find student by name + DOB, send OTP
+    // -------------------------------------------------------------
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody Map<String, String> body) {
+        String fullName = body.get("fullName");
+        String dobStr   = body.get("dateOfBirth");
+
+        if (fullName == null || fullName.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Nom complet obligatoire."));
+        }
+        if (dobStr == null || dobStr.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Date de naissance obligatoire."));
+        }
+
+        LocalDate dob;
+        try { dob = LocalDate.parse(dobStr); }
+        catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error",
+                    "Date de naissance invalide. Format attendu : AAAA-MM-JJ."));
+        }
+
+        Optional<Student> match = findStudent(fullName, dob);
+        if (match.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of(
+                    "error", "Aucun eleve ne correspond a ce nom et cette date. Verifiez aupres de l'administration."));
+        }
+
+        Student student = match.get();
+        String email = student.getEmail();
+        if (email == null || email.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "Aucun email enregistre pour cet eleve. Contactez l'administration."));
+        }
+
+        String code = sixDigit();
+        putOtp(email, code);
+        try {
+            emailService.sendOtpEmail(email, code);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "error", "Envoi email impossible: " + e.getMessage()));
+        }
+
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Un code de verification a ete envoye a " + maskEmail(email),
+                "email", email,
+                "studentId", student.getId()
+        ));
+    }
+
+    // -------------------------------------------------------------
+    // VERIFY-OTP  set password, create UserAccount
+    // -------------------------------------------------------------
+    @PostMapping("/verify-otp")
+    public ResponseEntity<?> verifyOtp(@RequestBody Map<String, String> body) {
+        String email    = body.get("email");
+        String code     = body.get("otp");
+        String password = body.get("password");
+        String studentIdStr = body.get("studentId");
+
+        if (email == null || code == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email et code obligatoires."));
+        }
+        if (password == null || password.length() < 6) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Mot de passe : 6 caracteres minimum."));
+        }
+        if (!checkOtp(email, code)) {
+            return ResponseEntity.status(401).body(Map.of("error", "Code invalide ou expire."));
+        }
+
+        Student student = null;
+        if (studentIdStr != null && !studentIdStr.isBlank()) {
+            student = studentRepo.findById(Long.valueOf(studentIdStr)).orElse(null);
+        }
+        if (student == null) student = studentRepo.findByEmail(email).orElse(null);
+        if (student == null) {
+            return ResponseEntity.status(404).body(Map.of("error", "Eleve introuvable."));
+        }
+
+        final Student finalStudent = student;
+        final String username = "STU-" + finalStudent.getId();
+
+        UserAccount account = userRepo.findByUsername(username).orElseGet(() -> {
+            UserAccount u = new UserAccount();
+            u.setUsername(username);
+            u.setEmail(finalStudent.getEmail());
+            u.setFirstName(finalStudent.getFullName());
+            u.setRole(Role.STUDENT);
+            u.setEnabled(true);
+            return u;
+        });
+        account.setPassword(passwordEncoder.encode(password));
+        userRepo.save(account);
+
+        finalStudent.setUserAccountId(account.getId());
+        studentRepo.save(finalStudent);
+        clearOtp(email);
+
+        String token = jwtUtil.generateToken(username, "STUDENT");
+        Map<String, Object> userOut = new HashMap<>();
+        userOut.put("id", account.getId());
+        userOut.put("username", username);
+        userOut.put("role", "STUDENT");
+        userOut.put("studentId", finalStudent.getId());
+        userOut.put("fullName", finalStudent.getFullName());
+
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Compte active. Bienvenue !",
+                "token", token,
+                "user", userOut
+        ));
+    }
+
+    // -------------------------------------------------------------
+    // LOGIN  fullName + password
+    // -------------------------------------------------------------
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody Map<String, String> body) {
+        String fullName = body.get("fullName");
+        String password = body.get("password");
+
+        if (fullName == null || fullName.isBlank() || password == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Nom complet et mot de passe obligatoires."));
+        }
+
+        Optional<Student> studentOpt = findStudentByName(fullName);
+        if (studentOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("error", "Nom ou mot de passe incorrect."));
+        }
+        Student student = studentOpt.get();
+        if (student.getUserAccountId() == null) {
+            return ResponseEntity.status(401).body(Map.of("error",
+                    "Ce compte n'a pas encore de mot de passe. Utilisez 'Activer un compte'."));
+        }
+        Optional<UserAccount> userOpt = userRepo.findById(student.getUserAccountId());
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("error", "Compte introuvable."));
+        }
+        UserAccount user = userOpt.get();
+        if (!passwordEncoder.matches(password, user.getPassword())) {
+            return ResponseEntity.status(401).body(Map.of("error", "Nom ou mot de passe incorrect."));
+        }
+
+        String token = jwtUtil.generateToken(user.getUsername(), "STUDENT");
+        Map<String, Object> userOut = new HashMap<>();
+        userOut.put("id", user.getId());
+        userOut.put("username", user.getUsername());
+        userOut.put("role", "STUDENT");
+        userOut.put("studentId", student.getId());
+        userOut.put("fullName", student.getFullName());
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("success", true);
+        out.put("token", token);
+        out.put("user", userOut);
+        return ResponseEntity.ok(out);
+    }
+
+    // -------------------------------------------------------------
+    // FORGOT  send OTP to email on file
+    // -------------------------------------------------------------
+    @PostMapping("/forgot")
+    public ResponseEntity<?> forgot(@RequestBody Map<String, String> body) {
+        String fullName = body.get("fullName");
+        if (fullName == null || fullName.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Nom complet obligatoire."));
+        }
+        Optional<Student> studentOpt = findStudentByName(fullName);
+        if (studentOpt.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "Aucun eleve avec ce nom."));
+        }
+        Student student = studentOpt.get();
+        String email = student.getEmail();
+        if (email == null || email.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Aucun email sur ce compte."));
+        }
+        String code = sixDigit();
+        putOtp(email, code);
+        try {
+            emailService.sendOtpEmail(email, code);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of("error", "Envoi impossible: " + e.getMessage()));
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Un code a ete envoye a " + maskEmail(email),
+                "email", email
+        ));
+    }
+
+    // -------------------------------------------------------------
+    // RESET  OTP + new password
+    // -------------------------------------------------------------
+    @PostMapping("/reset")
+    public ResponseEntity<?> reset(@RequestBody Map<String, String> body) {
+        String email    = body.get("email");
+        String code     = body.get("otp");
+        String password = body.get("password");
+        if (email == null || code == null || password == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Email, code et mot de passe obligatoires."));
+        }
+        if (password.length() < 6) {
+            return ResponseEntity.badRequest().body(Map.of("error", "6 caracteres minimum."));
+        }
+        if (!checkOtp(email, code)) {
+            return ResponseEntity.status(401).body(Map.of("error", "Code invalide ou expire."));
+        }
+        Optional<Student> studentOpt = studentRepo.findByEmail(email);
+        if (studentOpt.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "Compte introuvable."));
+        }
+        Student student = studentOpt.get();
+        if (student.getUserAccountId() == null) {
+            return ResponseEntity.status(404).body(Map.of("error", "Compte non active."));
+        }
+        Optional<UserAccount> userOpt = userRepo.findById(student.getUserAccountId());
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("error", "Compte introuvable."));
+        }
+        UserAccount user = userOpt.get();
+        user.setPassword(passwordEncoder.encode(password));
+        userRepo.save(user);
+        clearOtp(email);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Mot de passe mis a jour."));
+    }
+}

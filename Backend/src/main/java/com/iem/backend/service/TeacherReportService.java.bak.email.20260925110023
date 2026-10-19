@@ -1,0 +1,100 @@
+package com.iem.backend.service;
+
+import com.iem.backend.dto.TeacherReportRequest;
+import com.iem.backend.dto.TeacherReportResponse;
+import com.iem.backend.model.Teacher;
+import com.iem.backend.model.TeacherReport;
+import com.iem.backend.repository.TeacherReportRepository;
+import com.iem.backend.repository.TeacherRepository;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+@Service
+public class TeacherReportService {
+
+    private final TeacherReportRepository repo;
+    private final TeacherRepository teacherRepo;
+
+    public TeacherReportService(TeacherReportRepository repo, TeacherRepository teacherRepo) {
+        this.repo = repo;
+        this.teacherRepo = teacherRepo;
+    }
+
+    @Transactional
+    public TeacherReportResponse upsert(Long teacherId, TeacherReportRequest req) {
+        Teacher teacher = teacherRepo.findById(teacherId)
+                .orElseThrow(() -> new RuntimeException("Teacher not found: " + teacherId));
+
+        LocalDate date = (req.reportDate != null) ? req.reportDate : LocalDate.now();
+        if (date.isAfter(LocalDate.now())) {
+            throw new RuntimeException("Report date cannot be in the future");
+        }
+
+        TeacherReport report = repo.findByTeacherIdAndReportDate(teacherId, date)
+                .orElseGet(() -> {
+                    TeacherReport r = new TeacherReport();
+                    r.setTeacher(teacher);
+                    r.setReportDate(date);
+                    return r;
+                });
+
+        report.setSummary(req.summary);
+        report.setClassesTaught(req.classesTaught);
+        report.setHoursWorked(req.hoursWorked);
+        report.setIssues(req.issues);
+        report.setAchievements(req.achievements);
+        report.setStatus("SUBMITTED");
+
+        return TeacherReportResponse.from(repo.save(report));
+    }
+
+    @Transactional(readOnly = true)
+    public List<TeacherReportResponse> listForTeacher(Long teacherId) {
+        return repo.findByTeacherIdOrderByReportDateDesc(teacherId)
+                .stream().map(TeacherReportResponse::from).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public Optional<TeacherReportResponse> todayForTeacher(Long teacherId) {
+        return repo.findByTeacherIdAndReportDate(teacherId, LocalDate.now())
+                .map(TeacherReportResponse::from);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TeacherReportResponse> listAll(Long teacherId, LocalDate from, LocalDate to) {
+        List<TeacherReport> rows;
+        if (teacherId != null && from != null && to != null) {
+            rows = repo.findByTeacherIdAndReportDateBetweenOrderByReportDateDesc(teacherId, from, to);
+        } else if (from != null && to != null) {
+            rows = repo.findByReportDateBetweenOrderByReportDateDesc(from, to);
+        } else {
+            rows = repo.findAllByOrderByReportDateDesc();
+        }
+        return rows.stream().map(TeacherReportResponse::from).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public TeacherReportResponse getById(Long id) {
+        return repo.findById(id).map(TeacherReportResponse::from)
+                .orElseThrow(() -> new RuntimeException("Report not found: " + id));
+    }
+
+    @Transactional
+    public void delete(Long id) { repo.deleteById(id); }
+
+    @Transactional
+    public TeacherReportResponse update(Long id, TeacherReportRequest req) {
+        TeacherReport r = repo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Report not found: " + id));
+        if (req.summary != null)       r.setSummary(req.summary);
+        if (req.classesTaught != null) r.setClassesTaught(req.classesTaught);
+        if (req.hoursWorked != null)   r.setHoursWorked(req.hoursWorked);
+        if (req.issues != null)        r.setIssues(req.issues);
+        if (req.achievements != null)  r.setAchievements(req.achievements);
+        return TeacherReportResponse.from(repo.save(r));
+    }
+}

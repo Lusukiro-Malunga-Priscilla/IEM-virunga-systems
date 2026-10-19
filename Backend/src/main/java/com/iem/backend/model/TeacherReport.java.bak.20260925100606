@@ -1,0 +1,61 @@
+package com.iem.backend.model;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+
+@Entity
+@Table(name = "teacher_reports")
+public class TeacherReport {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private LocalDate reportDate;
+    private String summary;
+    private String status;
+
+    @ManyToOne
+    @JoinColumn(name = "teacher_id")
+    private Employee teacher;
+
+    public TeacherReport() {
+        this.reportDate = LocalDate.now();
+    }
+
+    public Long getId() {
+        return id;
+    }
+
+    public LocalDate getReportDate() {
+        return reportDate;
+    }
+
+    public void setReportDate(LocalDate reportDate) {
+        this.reportDate = reportDate;
+    }
+
+    public String getSummary() {
+        return summary;
+    }
+
+    public void setSummary(String summary) {
+        this.summary = summary;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public Employee getTeacher() {
+        return teacher;
+    }
+
+    public void setTeacher(Employee teacher) {
+        this.teacher = teacher;
+    }
+}

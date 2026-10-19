@@ -1,0 +1,52 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.model.LeaveRequest;
+import com.iem.backend.service.LeaveRequestService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/leaves")
+public class LeaveController {
+
+    private final LeaveRequestService leaveRequestService;
+
+    public LeaveController(LeaveRequestService leaveRequestService) {
+        this.leaveRequestService = leaveRequestService;
+    }
+
+    @GetMapping
+    public List<LeaveRequest> getAllLeaves() {
+        return leaveRequestService.findAll();
+    }
+
+    @GetMapping("/status/{status}")
+    public List<LeaveRequest> getLeavesByStatus(@PathVariable String status) {
+        return leaveRequestService.findByStatus(status);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<LeaveRequest> getLeave(@PathVariable Long id) {
+        try {
+            return ResponseEntity.ok(leaveRequestService.findById(id));
+        } catch (Exception ex) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @PostMapping
+    public LeaveRequest submitLeave(@RequestBody LeaveRequest leaveRequest) {
+        return leaveRequestService.save(leaveRequest);
+    }
+
+    @PutMapping("/{id}/status")
+    public ResponseEntity<LeaveRequest> updateLeaveStatus(@PathVariable Long id, @RequestParam(name = "status") String status) {
+        try {
+            return ResponseEntity.ok(leaveRequestService.updateStatus(id, status));
+        } catch (Exception ex) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+}

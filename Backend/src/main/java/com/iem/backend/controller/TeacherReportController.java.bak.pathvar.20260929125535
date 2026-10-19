@@ -1,0 +1,110 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.dto.TeacherReportRequest;
+import com.iem.backend.dto.TeacherReportResponse;
+import com.iem.backend.model.Teacher;
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.TeacherRepository;
+import com.iem.backend.repository.UserAccountRepository;
+import com.iem.backend.service.TeacherReportService;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/reports")
+public class TeacherReportController {
+
+    private final TeacherReportService service;
+    private final UserAccountRepository userRepo;
+    private final TeacherRepository teacherRepo;
+
+    public TeacherReportController(TeacherReportService service,
+                                   UserAccountRepository userRepo,
+                                   TeacherRepository teacherRepo) {
+        this.service = service;
+        this.userRepo = userRepo;
+        this.teacherRepo = teacherRepo;
+    }
+
+    private Teacher requireTeacher(Authentication auth) {
+        if (auth == null || auth.getName() == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not authenticated");
+        }
+        UserAccount user = userRepo.findByUsername(auth.getName())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.UNAUTHORIZED, "User not found: " + auth.getName()));
+
+        Teacher t = teacherRepo.findByEmail(user.getEmail()).orElse(null);
+        if (t == null) {
+            // Auto-create the teacher row (all IEM accounts are teachers by design)
+            t = new Teacher();
+            t.setEmail(user.getEmail());
+            t.setPrenom(user.getFirstName() != null ? user.getFirstName() : user.getUsername());
+            t.setNom(user.getLastName()  != null ? user.getLastName()  : "Ã¢â‚¬â€");
+            t = teacherRepo.save(t);
+        }
+        return t;
+    }
+
+    @PostMapping
+    public TeacherReportResponse create(Authentication auth, @RequestBody TeacherReportRequest req) {
+        Teacher t = requireTeacher(auth);
+        return service.upsert(t.getId(), req);
+    }
+
+    @GetMapping("/me")
+    public List<TeacherReportResponse> mine(Authentication auth) {
+        return service.listForTeacher(requireTeacher(auth).getId());
+    }
+
+    @GetMapping("/me/today")
+    public ResponseEntity<TeacherReportResponse> today(Authentication auth) {
+        Teacher t = requireTeacher(auth);
+        return service.todayForTeacher(t.getId())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    @GetMapping
+    public List<TeacherReportResponse> list(
+            @RequestParam(name = "teacherId", required = false) Long teacherId,
+            @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return service.listAll(teacherId, from, to);
+    }
+
+    @GetMapping("/{id}")
+    public TeacherReportResponse getOne(@PathVariable Long id) { return service.getById(id); }
+
+    @PutMapping("/{id}")
+    public TeacherReportResponse update(@PathVariable Long id, @RequestBody TeacherReportRequest req) {
+        return service.update(id, req);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        service.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/stats")
+    public Map<String, Object> stats() {
+        LocalDate today = LocalDate.now();
+        LocalDate weekStart = today.minusDays(6);
+        LocalDate monthStart = today.withDayOfMonth(1);
+        return Map.of(
+                "total",     service.listAll(null, null, null).size(),
+                "thisWeek",  service.listAll(null, weekStart, today).size(),
+                "thisMonth", service.listAll(null, monthStart, today).size(),
+                "today",     service.listAll(null, today, today).size()
+        );
+    }
+}

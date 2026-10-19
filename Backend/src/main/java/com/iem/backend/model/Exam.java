@@ -1,0 +1,125 @@
+package com.iem.backend.model;
+
+import jakarta.persistence.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+
+@Entity
+@Table(name = "exams")
+public class Exam {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, length = 200)
+    private String title;
+
+    @Column(length = 150)
+    private String subject;
+
+    @Column(name = "student_class", length = 100)
+    private String studentClass;
+
+    @Column(name = "exam_date")
+    private LocalDate examDate;
+
+    @Column(name = "exam_type", length = 30)
+    private String examType;      // QUIZ | EXAM | TP | INTERRO
+
+    @Column(name = "max_score")
+    private Double maxScore;
+
+    @Column(name = "duration")
+    private Integer duration;     // minutes
+
+    @Column(length = 2000)
+    private String description;
+
+    @Column(length = 30)
+    private String status;        // DRAFT | PUBLISHED | CLOSED
+
+    @ManyToOne
+    @JoinColumn(name = "teacher_id")
+    private Teacher createdByTeacher;
+
+    @Column(name = "attachment_url", columnDefinition = "NVARCHAR(MAX)")
+    private String attachmentUrl;
+
+
+
+    @Column(name = "attachment_name", length = 300)
+    private String attachmentName;
+
+
+
+    @Column(name = "attachment_mime", length = 150)
+    private String attachmentMime;
+
+
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    public Exam() {
+        this.examDate = LocalDate.now();
+        this.examType = "EXAM";
+        this.maxScore = 20.0;
+        this.status = "DRAFT";
+        this.createdAt = LocalDateTime.now();
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    public void preUpdate() { this.updatedAt = LocalDateTime.now(); }
+
+    public Long getId() { return id; }
+
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
+
+    public String getSubject() { return subject; }
+    public void setSubject(String subject) { this.subject = subject; }
+
+    public String getStudentClass() { return studentClass; }
+    public void setStudentClass(String studentClass) { this.studentClass = studentClass; }
+
+    public LocalDate getExamDate() { return examDate; }
+    public void setExamDate(LocalDate examDate) { this.examDate = examDate; }
+
+    public String getExamType() { return examType; }
+    public void setExamType(String examType) { this.examType = examType; }
+
+    public Double getMaxScore() { return maxScore; }
+    public void setMaxScore(Double maxScore) { this.maxScore = maxScore; }
+
+    public Integer getDuration() { return duration; }
+    public void setDuration(Integer duration) { this.duration = duration; }
+
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public Teacher getCreatedByTeacher() { return createdByTeacher; }
+    public void setCreatedByTeacher(Teacher createdByTeacher) { this.createdByTeacher = createdByTeacher; }
+
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getAttachmentUrl() { return attachmentUrl; }
+    public void setAttachmentUrl(String attachmentUrl) { this.attachmentUrl = attachmentUrl; }
+
+    public String getAttachmentName() { return attachmentName; }
+    public void setAttachmentName(String attachmentName) { this.attachmentName = attachmentName; }
+
+    public String getAttachmentMime() { return attachmentMime; }
+    public void setAttachmentMime(String attachmentMime) { this.attachmentMime = attachmentMime; }
+}

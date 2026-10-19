@@ -1,0 +1,17 @@
+package com.iem.backend.config;
+
+import com.iem.backend.model.Employee;
+import com.iem.backend.model.Role;
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.EmployeeRepository;
+import com.iem.backend.repository.UserAccountRepository;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+@Configuration
+public class DataLoader {
+// DISABLED-BY-USER: default user seeding removed.
+    // To restore, replace this stub with the original @Bean method.
+}

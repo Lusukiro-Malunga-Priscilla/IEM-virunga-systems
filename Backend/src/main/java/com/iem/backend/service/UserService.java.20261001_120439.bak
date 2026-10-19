@@ -1,0 +1,114 @@
+﻿package com.iem.backend.service;
+
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.UserAccountRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+@Service
+public class UserService implements UserDetailsService {
+
+    private final Map<String, OtpEntry> otpStore = new ConcurrentHashMap<>();
+    private final UserAccountRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+
+    @Autowired
+    public UserService(UserAccountRepository userRepository, PasswordEncoder passwordEncoder) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+    }
+
+    public UserAccount findByUsername(String username) {
+        return userRepository.findByUsername(username).orElse(null);
+    }
+
+    public boolean existsByUsername(String username) {
+        return userRepository.existsByUsername(username);
+    }
+
+    public UserAccount saveUser(UserAccount user) {
+        if (user.getPassword() != null && !user.getPassword().startsWith("$2a$")) {
+            user.setPassword(passwordEncoder.encode(user.getPassword()));
+        }
+        return userRepository.save(user);
+    }
+
+    public String generateAndStoreOtp(String email) {
+        String normalizedEmail = email.trim().toLowerCase();
+        String otp = String.format("%06d", new SecureRandom().nextInt(1_000_000));
+        otpStore.put(normalizedEmail, new OtpEntry(otp, Instant.now().plusSeconds(300)));
+        return otp;
+    }
+
+    public boolean verifyOtp(String email, String otp) {
+        String normalizedEmail = email.trim().toLowerCase();
+        OtpEntry entry = otpStore.get(normalizedEmail);
+
+        if (entry == null) {
+            return false;
+        }
+
+        if (Instant.now().isAfter(entry.expiresAt)) {
+            otpStore.remove(normalizedEmail);
+            return false;
+        }
+
+        if (!entry.code.equals(otp.trim())) {
+            return false;
+        }
+
+        otpStore.remove(normalizedEmail);
+        return true;
+    }
+
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+        UserAccount user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
+
+        return new User(
+                user.getUsername(),
+                user.getPassword(),
+                user.isEnabled(),
+                true,
+                true,
+                true,
+                new ArrayList<>()
+        );
+    }
+
+    public static class OtpEntry {
+        public final String code;
+        public final Instant expiresAt;
+
+        public OtpEntry(String code, Instant expiresAt) {
+            this.code = code;
+            this.expiresAt = expiresAt;
+        }
+    }
+
+    /**
+     * Resolve a user by username OR email (case-insensitive).
+     * Returns null when neither matches.
+     */
+    public UserAccount findByUsernameOrEmail(String identifier) {
+        if (identifier == null) return null;
+        String v = identifier.trim().toLowerCase();
+        UserAccount u = findByUsername(v);
+        if (u == null) {
+            u = userRepository.findByEmail(v).orElse(null);
+        }
+        return u;
+    }
+}

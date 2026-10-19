@@ -1,0 +1,151 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.dto.PaymentRequestDTO;
+import com.iem.backend.dto.StudentPaymentSummaryDTO;
+import com.iem.backend.model.Payment;
+import com.iem.backend.service.PaymentService;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/payments")
+@CrossOrigin(origins = "http://localhost:3000")
+public class PaymentController {
+
+    private final PaymentService paymentService;
+
+    public PaymentController(PaymentService paymentService) {
+        this.paymentService = paymentService;
+    }
+
+    @GetMapping
+    public ResponseEntity<List<Payment>> getAllPayments() {
+        try {
+            List<Payment> payments = paymentService.findAll();
+            return ResponseEntity.ok(payments);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/summary")
+    public ResponseEntity<List<StudentPaymentSummaryDTO>> getPaymentSummary() {
+        try {
+            return ResponseEntity.ok(paymentService.getPaymentSummary());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Payment> getPaymentById(@PathVariable("id") Long id) {
+        return paymentService.findById(id)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/student/{studentId}")
+    public ResponseEntity<List<Payment>> getPaymentsByStudent(
+            @PathVariable("studentId") Long studentId) {
+        try {
+            List<Payment> payments = paymentService.findByStudentId(studentId);
+            return ResponseEntity.ok(payments);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/status/{status}")
+    public ResponseEntity<List<Payment>> getPaymentsByStatus(
+            @PathVariable("status") String status) {
+        try {
+            List<Payment> payments = paymentService.findByStatus(status);
+            return ResponseEntity.ok(payments);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/pending")
+    public ResponseEntity<List<Payment>> getPendingPayments() {
+        try {
+            List<Payment> payments = paymentService.findByStatus("PENDING");
+            return ResponseEntity.ok(payments);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PostMapping("/pay")
+    public ResponseEntity<?> registerPayment(@RequestBody PaymentRequestDTO request) {
+        try {
+            if (request.getStudentId() == null) {
+                return ResponseEntity.badRequest().body(Map.of("error", "studentId est requis."));
+            }
+            if (request.getAmount() == null || request.getAmount() <= 0) {
+                return ResponseEntity.badRequest().body(Map.of("error", "Le montant doit tre suprieur  0."));
+            }
+
+            Payment payment = paymentService.addPayment(
+                    request.getStudentId(), request.getAmount(), request.getTotalAmount());
+            return ResponseEntity.status(HttpStatus.CREATED).body(payment);
+        } catch (RuntimeException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Erreur interne du serveur."));
+        }
+    }
+
+    @PostMapping
+    public ResponseEntity<Payment> createPayment(@RequestBody Payment payment) {
+        try {
+            if (payment.getStudent() == null || payment.getStudent().getId() == null) {
+                return ResponseEntity.badRequest().build();
+            }
+            if (payment.getTotalAmount() == null || payment.getTotalAmount() <= 0) {
+                return ResponseEntity.badRequest().build();
+            }
+            if (payment.getPaidAmount() == null || payment.getPaidAmount() < 0) {
+                return ResponseEntity.badRequest().build();
+            }
+
+            Payment savedPayment = paymentService.save(payment);
+            return ResponseEntity.status(HttpStatus.CREATED).body(savedPayment);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<Payment> updatePayment(
+            @PathVariable("id") Long id,
+            @RequestBody Payment payment) {
+        try {
+            if (!paymentService.findById(id).isPresent()) {
+                return ResponseEntity.notFound().build();
+            }
+            Payment updatedPayment = paymentService.update(id, payment);
+            return ResponseEntity.ok(updatedPayment);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deletePayment(@PathVariable("id") Long id) {
+        try {
+            if (!paymentService.findById(id).isPresent()) {
+                return ResponseEntity.notFound().build();
+            }
+            paymentService.deleteById(id);
+            return ResponseEntity.noContent().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+}

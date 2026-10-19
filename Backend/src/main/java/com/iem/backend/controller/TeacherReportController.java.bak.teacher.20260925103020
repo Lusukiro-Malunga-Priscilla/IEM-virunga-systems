@@ -1,0 +1,122 @@
+package com.iem.backend.controller;
+
+import com.iem.backend.dto.TeacherReportRequest;
+import com.iem.backend.dto.TeacherReportResponse;
+import com.iem.backend.model.Employee;
+import com.iem.backend.model.UserAccount;
+import com.iem.backend.repository.EmployeeRepository;
+import com.iem.backend.repository.UserAccountRepository;
+import com.iem.backend.service.TeacherReportService;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/reports")
+public class TeacherReportController {
+
+    private final TeacherReportService service;
+    private final UserAccountRepository userRepo;
+    private final EmployeeRepository employeeRepo;
+
+    public TeacherReportController(TeacherReportService service,
+                                   UserAccountRepository userRepo,
+                                   EmployeeRepository employeeRepo) {
+        this.service = service;
+        this.userRepo = userRepo;
+        this.employeeRepo = employeeRepo;
+    }
+
+    /**
+     * Resolve the logged-in user to an existing Employee row.
+     * Does NOT auto-create (employees.first_name is NOT NULL).
+     * Throws 403 when the account has no Employee record
+     * (e.g. school/admin accounts).
+     */
+    private Employee requireEmployee(Authentication auth) {
+        if (auth == null || auth.getName() == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Not authenticated");
+        }
+        UserAccount user = userRepo.findByUsername(auth.getName())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.UNAUTHORIZED, "User not found: " + auth.getName()));
+
+        return employeeRepo.findByEmail(user.getEmail())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.FORBIDDEN,
+                        "This account is not linked to an employee record. "
+                        + "Only teachers can submit or view reports."));
+    }
+
+    // ---- teacher-side ----
+
+    @PostMapping
+    public TeacherReportResponse create(Authentication auth,
+                                        @RequestBody TeacherReportRequest req) {
+        Employee emp = requireEmployee(auth);
+        return service.upsert(emp.getId(), req);
+    }
+
+    @GetMapping("/me")
+    public List<TeacherReportResponse> mine(Authentication auth) {
+        Employee emp = requireEmployee(auth);
+        return service.listForTeacher(emp.getId());
+    }
+
+    @GetMapping("/me/today")
+    public ResponseEntity<TeacherReportResponse> today(Authentication auth) {
+        Employee emp = requireEmployee(auth);
+        return service.todayForTeacher(emp.getId())
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    // ---- admin-side ----
+
+    @GetMapping
+    public List<TeacherReportResponse> list(
+            @RequestParam(required = false) Long teacherId,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return service.listAll(teacherId, from, to);
+    }
+
+    @GetMapping("/{id}")
+    public TeacherReportResponse getOne(@PathVariable Long id) {
+        return service.getById(id);
+    }
+
+    @PutMapping("/{id}")
+    public TeacherReportResponse update(@PathVariable Long id,
+                                        @RequestBody TeacherReportRequest req) {
+        return service.update(id, req);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable Long id) {
+        service.delete(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/stats")
+    public Map<String, Object> stats() {
+        LocalDate today = LocalDate.now();
+        LocalDate weekStart = today.minusDays(6);
+        LocalDate monthStart = today.withDayOfMonth(1);
+        return Map.of(
+                "total",     service.listAll(null, null, null).size(),
+                "thisWeek",  service.listAll(null, weekStart, today).size(),
+                "thisMonth", service.listAll(null, monthStart, today).size(),
+                "today",     service.listAll(null, today, today).size()
+        );
+    }
+}
