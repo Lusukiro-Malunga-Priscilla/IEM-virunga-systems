@@ -1,0 +1,160 @@
+// src/components/PaymentHistoryDrawer.tsx
+import React, { useEffect, useState } from "react";
+import { X, Loader2, Clock, CheckCircle2, AlertCircle } from "lucide-react";
+import { paymentApi, Payment } from "@/lib/paymentApi";
+
+interface Props {
+  studentId: number | null;
+  studentName?: string;
+  onClose: () => void;
+}
+
+function fmt(n: number | null | undefined) {
+  if (n == null) return "0";
+  return Number(n).toLocaleString("fr-FR");
+}
+
+function statusLabel(s: string | undefined) {
+  if (!s) return "Inconnu";
+  const up = s.toUpperCase();
+  if (up.includes("PAY") && !up.includes("PART")) return "Paye";
+  if (up.includes("PART")) return "Partiel";
+  if (up.includes("IMP") || up.includes("PEND")) return "Impaye";
+  return s;
+}
+
+export default function PaymentHistoryDrawer({ studentId, studentName, onClose }: Props) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [rows, setRows] = useState<Payment[]>([]);
+
+  useEffect(() => {
+    if (!studentId) return;
+    setLoading(true); setError(null);
+    paymentApi.historyFor(studentId)
+      .then(r => setRows(r || []))
+      .catch(e => setError(e instanceof Error ? e.message : "Erreur de chargement."))
+      .finally(() => setLoading(false));
+  }, [studentId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!studentId) return null;
+
+  const sorted = [...rows].sort((a, b) =>
+    (b.paymentDate || "").localeCompare(a.paymentDate || "")
+  );
+  const totalPaid = rows.reduce((s, r) => s + Number(r.paidAmount || 0), 0);
+  const remaining = rows.length ? Number(rows[0].remainingAmount || 0) : 0;
+  const total = rows.length ? Number(rows[0].totalAmount || 0) : 0;
+
+  return (
+    <>
+      <div className="ph-bg" onClick={onClose} />
+      <aside className="ph-drawer">
+        <style>{`
+          .ph-bg { position:fixed; inset:0; background:rgba(11,27,58,.35); z-index:60; }
+          .ph-drawer { position:fixed; top:0; right:0; bottom:0; width:min(620px,100vw);
+            background:#fff; box-shadow:-12px 0 40px rgba(0,0,0,.15); z-index:61;
+            display:flex; flex-direction:column; font-family:'IBM Plex Sans',system-ui,sans-serif; color:#221F1B; }
+          .ph-head { padding:20px 24px; border-bottom:1px solid #E4E8EF;
+            display:flex; justify-content:space-between; align-items:flex-start; }
+          .ph-title { font-size:17px; font-weight:700; color:#0B1B3A; margin:0 0 2px; }
+          .ph-sub { color:#64748B; font-size:12.5px; margin:0; }
+          .ph-close { border:none; background:#F1F5F9; width:32px; height:32px; border-radius:8px;
+            cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+          .ph-close:hover { background:#E2E8F0; }
+          .ph-kpis { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; padding:16px 24px;
+            border-bottom:1px solid #E4E8EF; background:#FAFAF8; }
+          .ph-kpi { background:#fff; border:1px solid #E4E8EF; border-radius:8px; padding:10px 12px; }
+          .ph-kpi .k { font-size:10.5px; font-weight:600; letter-spacing:.04em;
+            text-transform:uppercase; color:#64748B; }
+          .ph-kpi .v { font-size:15px; font-weight:700; color:#0B1B3A; margin-top:2px; }
+          .ph-body { flex:1; overflow:auto; padding:0; }
+          .ph-empty { padding:48px 24px; text-align:center; color:#94A3B8; font-size:13.5px; }
+          table.ph-table { width:100%; border-collapse:collapse; font-size:13.5px; }
+          .ph-table thead th { background:#F1F5F9; text-align:left; padding:10px 16px;
+            font-size:11px; font-weight:600; letter-spacing:.04em; color:#64748B;
+            text-transform:uppercase; white-space:nowrap; position:sticky; top:0; }
+          .ph-table tbody td { padding:10px 16px; border-top:1px solid #E4E8EF; }
+          .ph-badge { display:inline-block; padding:3px 9px; border-radius:999px;
+            font-size:11px; font-weight:600; }
+          .ph-badge.paid    { background:#E6F4EA; color:#14532D; }
+          .ph-badge.partial { background:#FEF3C7; color:#92400E; }
+          .ph-badge.unpaid  { background:#FDECEC; color:#9B2C2C; }
+          .ph-foot { padding:14px 24px; border-top:1px solid #E4E8EF;
+            display:flex; justify-content:space-between; align-items:center; background:#FAFAF8; }
+          .ph-foot .lbl { font-size:12.5px; color:#64748B; }
+          .ph-foot .amt { font-size:15px; font-weight:700; color:#0B1B3A; }
+          .spin { animation: ph-spin .9s linear infinite; }
+          @keyframes ph-spin { to { transform: rotate(360deg); } }
+        `}</style>
+
+        <div className="ph-head">
+          <div>
+            <h2 className="ph-title">{studentName || "Historique des paiements"}</h2>
+            <p className="ph-sub">Tous les paiements enregistres pour cet eleve</p>
+          </div>
+          <button className="ph-close" onClick={onClose} title="Fermer">
+            <X size={16} />
+          </button>
+        </div>
+
+        {rows.length > 0 && (
+          <div className="ph-kpis">
+            <div className="ph-kpi"><div className="k">Total attendu</div><div className="v">{fmt(total)} FC</div></div>
+            <div className="ph-kpi"><div className="k">Total paye</div><div className="v">{fmt(totalPaid)} FC</div></div>
+            <div className="ph-kpi"><div className="k">Reste a payer</div><div className="v">{fmt(remaining)} FC</div></div>
+          </div>
+        )}
+
+        <div className="ph-body">
+          {loading ? (
+            <div className="ph-empty"><Loader2 size={16} className="spin" /> Chargement...</div>
+          ) : error ? (
+            <div className="ph-empty" style={{ color:"#9B2C2C" }}>{error}</div>
+          ) : sorted.length === 0 ? (
+            <div className="ph-empty">
+              <Clock size={28} style={{ opacity:.4 }} />
+              <p>Aucun paiement enregistre pour cet eleve.</p>
+            </div>
+          ) : (
+            <table className="ph-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Montant paye</th>
+                  <th>Reste apres</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(p => {
+                  const st = statusLabel(p.status);
+                  const cls = st === "Paye" ? "paid" : st === "Partiel" ? "partial" : "unpaid";
+                  return (
+                    <tr key={p.id}>
+                      <td>{p.paymentDate || "-"}</td>
+                      <td style={{ fontWeight:600 }}>{fmt(p.paidAmount)} FC</td>
+                      <td>{fmt(p.remainingAmount)} FC</td>
+                      <td><span className={`ph-badge ${cls}`}>{st}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="ph-foot">
+          <span className="lbl">Total paye sur {sorted.length} paiement(s)</span>
+          <span className="amt">{fmt(totalPaid)} FC</span>
+        </div>
+      </aside>
+    </>
+  );
+}

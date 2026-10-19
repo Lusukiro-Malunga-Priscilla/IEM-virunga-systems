@@ -1,0 +1,210 @@
+// src/lib/api.ts
+// Shared HTTP client. Attaches the JWT to every request.
+//
+// âš ï¸  This file must NEVER import from "../lib/api" (circular self-import).
+
+import { apiUrl, ApiError } from "./courseApi";
+import type { Course } from "./courseApi";
+
+// Re-export so pages can import `Course` from api.ts if they want.
+export type { Course };
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// JWT lookup
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const TOKEN_KEYS = ["scolagest-auth-token", "token", "access_token", "accessToken", "jwt"] as const;
+
+function getToken(): string | null {
+  try {
+    for (const k of TOKEN_KEYS) {
+      const v = localStorage.getItem(k) ?? sessionStorage.getItem(k);
+      if (v) return v;
+    }
+  } catch {}
+  return null;
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const token = getToken();
+  return {
+    Accept: "application/json",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...extra,
+  };
+}
+
+async function handle(res: Response) {
+  // Auto-logout on expired / invalid token
+  if (res.status === 401 || res.status === 403) {
+    try {
+      localStorage.removeItem("scolagest-auth-token");
+      localStorage.removeItem("scolagest-auth-user");
+    } catch {}
+    if (!window.location.pathname.startsWith("/login")) {
+      window.location.href = "/login";
+    }
+    throw new ApiError("Session expirée. Veuillez vous reconnecter.", res.status);
+  }
+
+  if (!res.ok) {
+    let message = `Erreur ${res.status}`;
+    try {
+      const body = await res.json();
+      message = body?.message || body?.error || message;
+    } catch {}
+    throw new ApiError(message, res.status);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+async function request<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
+  const url = path.startsWith("http") ? path : apiUrl(path);
+  const res = await fetch(url, {
+    credentials: "include",
+    ...init,
+    headers: {
+      ...authHeaders(),
+      ...((init.headers as Record<string, string>) || {}),
+    },
+  });
+  return handle(res) as Promise<T>;
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Types
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export interface Classe { id: number; name: string; }
+
+export interface Student {
+  id: number;
+  fullName: string;
+  matricule?: string;
+  classe?: Classe;
+  section?: string;
+  email?: string;
+  registrationNumber?: string;
+}
+
+export interface Grade {
+  id: number;
+  studentId?: number;
+  courseId?: number;
+  courseName?: string;
+  course?: string;
+  note?: number;
+  score?: number;
+  max?: number;
+  coefficient?: number;
+  period?: string;
+}
+
+/** Alias kept for StudentDetail.tsx compatibility. */
+export type Score = Grade;
+
+/** Looser record shape used by TeacherScores.tsx. */
+export interface ScoreRecord {
+  id?: number;
+  studentId: number;
+  courseId: number;
+  period?: string;          // "P1" | "P2" | "EXAM" | "P3" | "P4" | ...
+  score?: number;           // value
+  max?: number;             // maximum (default 20)
+  coefficient?: number;
+  // Accept any extra fields the backend sends
+  [key: string]: unknown;
+}
+
+export interface SemesterBlock {
+  period1: number; period2: number; exam: number; total: number;
+}
+
+export interface BulletinRow {
+  courseId: number; courseName: string;
+  semester1: SemesterBlock; semester2: SemesterBlock;
+  generalTotal: number;
+}
+
+export interface BulletinCategory {
+  category: string;
+  maxima1: SemesterBlock; maxima2: SemesterBlock;
+  maximaGeneralTotal: number;
+  rows: BulletinRow[];
+}
+
+export interface BulletinStudent {
+  fullName: string; dateNaissance: string; lieuNaissance: string;
+  sexe: string; permNumber: string; academicYear: string;
+  className: string; level: string;
+}
+
+export interface Bulletin {
+  student: BulletinStudent;
+  categories: BulletinCategory[];
+  grandTotalMaxima: number;
+  grandTotalActual: number;
+  percentage: number;
+  place: number;
+  classSize: number;
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Students API
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export function getAllStudents(): Promise<Student[]> {
+  return request<Student[]>("/students");
+}
+
+export function getStudentById(id: number): Promise<Student> {
+  return request<Student>(`/students/${id}`);
+}
+
+export function getStudentGrades(id: number): Promise<Grade[]> {
+  return request<Grade[]>(`/students/${id}/grades`);
+}
+
+/** Alias â€” same data as getStudentGrades. */
+export function getScoresForStudent(id: number): Promise<Grade[]> {
+  return getStudentGrades(id);
+}
+
+export function getBulletin(studentId: number): Promise<Bulletin> {
+  return request<Bulletin>(`/students/${studentId}/bulletin`);
+}
+
+export function getCoursesForClass(classe: string | number): Promise<Course[]> {
+  const q = encodeURIComponent(String(classe));
+  return request<Course[]>(`/courses?classe=${q}`);
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Teacher API  â€” used by pages/teacher/Teacherscores.tsx
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+/** Courses taught by a given teacher. */
+export function getCoursesForTeacher(teacherId: number): Promise<Course[]> {
+  return request<Course[]>(`/courses?teacherId=${teacherId}`);
+}
+
+/** Students enrolled in a class (by class name or id). */
+export function getStudentsForClass(classe: string | number): Promise<Student[]> {
+  const q = encodeURIComponent(String(classe));
+  return request<Student[]>(`/students?classe=${q}`);
+}
+
+/** All saved score records for a given course. */
+export function getScoresForCourse(courseId: number): Promise<ScoreRecord[]> {
+  return request<ScoreRecord[]>(`/scores?courseId=${courseId}`);
+}
+
+/** Create or update a score record. */
+export function saveScore(payload: ScoreRecord): Promise<ScoreRecord> {
+  return request<ScoreRecord>("/scores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+

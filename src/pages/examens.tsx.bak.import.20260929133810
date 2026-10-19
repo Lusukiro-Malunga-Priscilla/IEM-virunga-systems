@@ -1,0 +1,107 @@
+import React, { useEffect, useState } from "react";
+import { api } from "./api";
+
+interface Exam {
+  id: number; title: string; subject: string; class_name: string | null;
+  teacher_name: string; original_name: string; submitted_at: string; status: string;
+  exam_date: string | null; start_time: string | null; end_time: string | null; room: string | null;
+}
+interface Draft { examDate: string; startTime: string; endTime: string; room: string; }
+
+const cell: React.CSSProperties = { padding: 12 };
+const inp: React.CSSProperties = { padding: 6, border: "1px solid #cbd5e1", borderRadius: 6 };
+
+export default function Examens() {
+  const [rows, setRows] = useState<Exam[]>([]);
+  const [drafts, setDrafts] = useState<Record<number, Draft>>({});
+  const [error, setError] = useState("");
+
+  const load = () => api.adminList().then(setRows).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  const draft = (r: Exam): Draft =>
+    drafts[r.id] || { examDate: r.exam_date || "", startTime: r.start_time || "", endTime: r.end_time || "", room: r.room || "" };
+  const setField = (r: Exam, k: keyof Draft, v: string) =>
+    setDrafts({ ...drafts, [r.id]: { ...draft(r), [k]: v } });
+
+  async function save(r: Exam) {
+    setError("");
+    try { await api.adminSchedule(r.id, draft(r)); await load(); }
+    catch (e: any) { setError(e.message); }
+  }
+  async function remove(r: Exam) {
+    if (!confirm(`Supprimer « ${r.title} » ?`)) return;
+    try { await api.adminDelete(r.id); await load(); } catch (e: any) { setError(e.message); }
+  }
+
+  // Timetable = scheduled exams sorted by date/time
+  const timetable = rows.filter((r) => r.exam_date)
+    .sort((a, b) => (a.exam_date! + a.start_time).localeCompare(b.exam_date! + b.start_time));
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 20, marginBottom: 6 }}>Examens</h1>
+      <p style={{ color: "#64748b", marginBottom: 12 }}>
+        Examens reçus des enseignants et calendrier des examens.
+      </p>
+      {error && <p style={{ color: "#b91c1c", marginBottom: 12 }}>{error}</p>}
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead style={{ background: "#f1f5f9", textAlign: "left" }}>
+            <tr>{["#", "Titre", "Matière", "Enseignant", "Reçu le", "Fichier", "Date", "Début", "Fin", "Salle", ""].map((h) => (
+              <th key={h} style={cell}>{h}</th>))}</tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const d = draft(r);
+              return (
+                <tr key={r.id} style={{ borderBottom: "1px solid #eef2f7" }}>
+                  <td style={cell}>{r.id}</td>
+                  <td style={cell}>{r.title}</td>
+                  <td style={cell}>{r.subject}</td>
+                  <td style={cell}>{r.teacher_name}</td>
+                  <td style={cell}>{r.submitted_at}</td>
+                  <td style={cell}>
+                    <button style={{ ...inp, cursor: "pointer" }} onClick={() => api.adminDownload(r.id, r.original_name).catch((e) => setError(e.message))}>
+                      Word ⬇
+                    </button>
+                  </td>
+                  <td style={cell}><input style={inp} type="date" value={d.examDate} onChange={(e) => setField(r, "examDate", e.target.value)} /></td>
+                  <td style={cell}><input style={inp} type="time" value={d.startTime} onChange={(e) => setField(r, "startTime", e.target.value)} /></td>
+                  <td style={cell}><input style={inp} type="time" value={d.endTime} onChange={(e) => setField(r, "endTime", e.target.value)} /></td>
+                  <td style={cell}><input style={{ ...inp, width: 80 }} value={d.room} onChange={(e) => setField(r, "room", e.target.value)} /></td>
+                  <td style={cell}>
+                    <button style={{ ...inp, cursor: "pointer" }} onClick={() => save(r)}>Planifier</button>{" "}
+                    <button style={{ ...inp, cursor: "pointer", color: "#b91c1c" }} onClick={() => remove(r)}>✕</button>
+                  </td>
+                </tr>
+              );
+            })}
+            {!rows.length && <tr><td colSpan={11} style={{ ...cell, color: "#64748b" }}>Aucun examen reçu.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      <h2 style={{ fontSize: 17, margin: "24px 0 8px" }}>Emploi du temps des examens</h2>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead style={{ background: "#f1f5f9", textAlign: "left" }}>
+          <tr>{["Date", "Horaire", "Matière", "Examen", "Enseignant", "Salle"].map((h) => <th key={h} style={cell}>{h}</th>)}</tr>
+        </thead>
+        <tbody>
+          {timetable.map((r) => (
+            <tr key={r.id} style={{ borderBottom: "1px solid #eef2f7" }}>
+              <td style={cell}>{r.exam_date}</td>
+              <td style={cell}>{r.start_time} - {r.end_time}</td>
+              <td style={cell}>{r.subject}</td>
+              <td style={cell}>{r.title}</td>
+              <td style={cell}>{r.teacher_name}</td>
+              <td style={cell}>{r.room || "-"}</td>
+            </tr>
+          ))}
+          {!timetable.length && <tr><td colSpan={6} style={{ ...cell, color: "#64748b" }}>Aucun examen planifié.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}

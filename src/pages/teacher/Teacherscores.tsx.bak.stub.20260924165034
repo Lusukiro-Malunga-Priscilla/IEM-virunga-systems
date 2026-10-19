@@ -1,0 +1,235 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Course,
+  Student,
+  ScoreRecord,
+  getCoursesForTeacher,
+  getStudentsForClass,
+  getScoresForCourse,
+  saveScore,
+} from '../lib/api';
+
+// TODO: replace with your real auth context (e.g. useAuth().user.id)
+function useCurrentTeacherId(): number {
+  const id = Number(localStorage.getItem('userId'));
+  return id || 1;
+}
+
+interface RowState {
+  studentId: number;
+  scoreId?: number;
+  period1: string;
+  period2: string;
+  examScore: string;
+  saving: boolean;
+  saved: boolean;
+}
+
+export default function TeacherScores() {
+  const teacherId = useCurrentTeacherId();
+
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [selectedCourseId, setSelectedCourseId] = useState<number | null>(null);
+  const [semester, setSemester] = useState<1 | 2>(1);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [rows, setRows] = useState<Record<number, RowState>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const selectedCourse = useMemo(
+    () => courses.find(c => c.id === selectedCourseId) || null,
+    [courses, selectedCourseId]
+  );
+
+  useEffect(() => {
+    getCoursesForTeacher(teacherId)
+      .then(list => {
+        setCourses(list);
+        if (list.length > 0) setSelectedCourseId(list[0].id);
+      })
+      .catch(e => setError(e.message));
+  }, [teacherId]);
+
+  useEffect(() => {
+    if (!selectedCourse) return;
+    setLoading(true);
+    setError(null);
+
+    Promise.all([
+      getStudentsForClass(selectedCourse.classe.id),
+      getScoresForCourse(selectedCourse.id, semester),
+    ])
+      .then(([studentList, scoreList]) => {
+        setStudents(studentList);
+        const byStudent: Record<number, ScoreRecord> = {};
+        scoreList.forEach(s => {
+          if (s.student) byStudent[s.student.id] = s;
+        });
+        const nextRows: Record<number, RowState> = {};
+        studentList.forEach(st => {
+          const existing = byStudent[st.id];
+          nextRows[st.id] = {
+            studentId: st.id,
+            scoreId: existing?.id,
+            period1: existing?.period1?.toString() ?? '',
+            period2: existing?.period2?.toString() ?? '',
+            examScore: existing?.examScore?.toString() ?? '',
+            saving: false,
+            saved: false,
+          };
+        });
+        setRows(nextRows);
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [selectedCourse, semester]);
+
+  function updateField(studentId: number, field: 'period1' | 'period2' | 'examScore', value: string) {
+    setRows(prev => ({
+      ...prev,
+      [studentId]: { ...prev[studentId], [field]: value, saved: false },
+    }));
+  }
+
+  function total(row: RowState) {
+    const p1 = parseFloat(row.period1) || 0;
+    const p2 = parseFloat(row.period2) || 0;
+    const ex = parseFloat(row.examScore) || 0;
+    return p1 + p2 + ex;
+  }
+
+  async function handleSave(studentId: number) {
+    if (!selectedCourse) return;
+    const row = rows[studentId];
+    setRows(prev => ({ ...prev, [studentId]: { ...prev[studentId], saving: true } }));
+    try {
+      const saved = await saveScore(studentId, selectedCourse.id, semester, {
+        period1: row.period1 === '' ? null : parseFloat(row.period1),
+        period2: row.period2 === '' ? null : parseFloat(row.period2),
+        examScore: row.examScore === '' ? null : parseFloat(row.examScore),
+      });
+      setRows(prev => ({
+        ...prev,
+        [studentId]: { ...prev[studentId], scoreId: saved.id, saving: false, saved: true },
+      }));
+    } catch (e: any) {
+      setError(e.message);
+      setRows(prev => ({ ...prev, [studentId]: { ...prev[studentId], saving: false } }));
+    }
+  }
+
+  async function handleSaveAll() {
+    for (const studentId of Object.keys(rows).map(Number)) {
+      await handleSave(studentId);
+    }
+  }
+
+  const maxTotal = selectedCourse
+    ? selectedCourse.maxPeriod1 + selectedCourse.maxPeriod2 + selectedCourse.maxExam
+    : 0;
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 20, marginBottom: 6 }}>Saisie des notes</h1>
+      <p style={{ color: '#64748b', marginBottom: 12 }}>
+        Choisissez votre matière et le semestre, puis saisissez les points de chaque élève.
+      </p>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <select
+          value={selectedCourseId ?? ''}
+          onChange={e => setSelectedCourseId(Number(e.target.value))}
+          style={{ padding: 8, borderRadius: 6, border: '1px solid #cbd5e1' }}
+        >
+          {courses.map(c => (
+            <option key={c.id} value={c.id}>
+              {c.name} — {c.classe?.name}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={semester}
+          onChange={e => setSemester(Number(e.target.value) as 1 | 2)}
+          style={{ padding: 8, borderRadius: 6, border: '1px solid #cbd5e1' }}
+        >
+          <option value={1}>1er semestre</option>
+          <option value={2}>2nd semestre</option>
+        </select>
+
+        <button
+          onClick={handleSaveAll}
+          style={{
+            padding: '8px 16px',
+            background: '#2563eb',
+            color: 'white',
+            border: 'none',
+            borderRadius: 6,
+            cursor: 'pointer',
+          }}
+        >
+          Enregistrer tout
+        </button>
+      </div>
+
+      {error && <p style={{ color: '#dc2626', marginBottom: 12 }}>{error}</p>}
+      {loading && <p>Chargement…</p>}
+
+      {selectedCourse && !loading && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead style={{ background: '#f1f5f9' }}>
+              <tr>
+                <th style={{ padding: 12, textAlign: 'left' }}>Élève</th>
+                <th style={{ padding: 12 }}>TR. 1ère P. (/{selectedCourse.maxPeriod1})</th>
+                <th style={{ padding: 12 }}>TR. 2e P. (/{selectedCourse.maxPeriod2})</th>
+                <th style={{ padding: 12 }}>EXAM (/{selectedCourse.maxExam})</th>
+                <th style={{ padding: 12 }}>TOT. (/{maxTotal})</th>
+                <th style={{ padding: 12 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {students.map(st => {
+                const row = rows[st.id];
+                if (!row) return null;
+                return (
+                  <tr key={st.id} style={{ borderBottom: '1px solid #eef2f7' }}>
+                    <td style={{ padding: 12 }}>{st.fullName}</td>
+                    {(['period1', 'period2', 'examScore'] as const).map(field => (
+                      <td key={field} style={{ padding: 8, textAlign: 'center' }}>
+                        <input
+                          type="number"
+                          value={row[field]}
+                          onChange={e => updateField(st.id, field, e.target.value)}
+                          style={{ width: 64, padding: 6, borderRadius: 4, border: '1px solid #cbd5e1', textAlign: 'center' }}
+                        />
+                      </td>
+                    ))}
+                    <td style={{ padding: 12, textAlign: 'center', fontWeight: 600 }}>{total(row)}</td>
+                    <td style={{ padding: 12, textAlign: 'center' }}>
+                      <button
+                        onClick={() => handleSave(st.id)}
+                        disabled={row.saving}
+                        style={{
+                          padding: '4px 10px',
+                          background: row.saved ? '#16a34a' : '#2563eb',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        {row.saving ? '...' : row.saved ? 'Enregistré ✓' : 'Enregistrer'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

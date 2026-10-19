@@ -1,0 +1,233 @@
+// import React, { useState } from 'react';
+// import AdminDailyAttendance from '../components/AdminDailyAttendance';
+// import TeacherStudentAttendance from '../components/TeacherStudentAttendance';
+// import TeacherSelfAttendance from '../components/TeacherSelfAttendance';
+// import StudentAttendanceHistory from '../components/StudentAttendanceHistory';
+// import { AttendeeType, StudentRosterItem } from '../types/attendance';
+
+// type Role = 'ADMIN' | 'TEACHER' | 'STUDENT';
+
+// interface CurrentUser {
+//   role: Role;
+//   userAccountId: number;
+//   username: string;
+//   // For a teacher: the class they currently teach / are taking attendance for.
+//   course?: string;
+// }
+
+// interface Props {
+//   // ADAPT ME: wire this to your real auth context, e.g. const { user } = useAuth();
+//   currentUser: CurrentUser;
+//   // ADAPT ME: fetch from your students API for currentUser.course and pass down.
+//   roster?: StudentRosterItem[];
+// }
+
+// export default function AttendancePage({ currentUser, roster = [] }: Props) {
+//   const [tab, setTab] = useState<AttendeeType>('STUDENT');
+
+//   return (
+//     <div>
+//       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+//         <div>
+//           <h1 style={{ fontSize: 20, margin: 0 }}>Présences</h1>
+//           <p style={{ color: '#64748b', margin: '4px 0 0' }}>Début des cours : 07h30</p>
+//         </div>
+
+//         <select
+//           value={tab}
+//           onChange={(e) => setTab(e.target.value as AttendeeType)}
+//           style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: 14 }}
+//         >
+//           <option value="STUDENT">Présence des élèves</option>
+//           <option value="TEACHER">Présence des enseignants</option>
+//         </select>
+//       </div>
+
+//       {currentUser.role === 'ADMIN' && (
+//         <AdminDailyAttendance attendeeType={tab} />
+//       )}
+
+//       {currentUser.role === 'TEACHER' && tab === 'STUDENT' && (
+//         <TeacherStudentAttendance
+//           teacherUsername={currentUser.username}
+//           course={currentUser.course || ''}
+//           roster={roster}
+//         />
+//       )}
+
+//       {currentUser.role === 'TEACHER' && tab === 'TEACHER' && (
+//         <TeacherSelfAttendance
+//           teacherUsername={currentUser.username}
+//           teacherUserAccountId={currentUser.userAccountId}
+//         />
+//       )}
+
+//       {currentUser.role === 'STUDENT' && (
+//         <StudentAttendanceHistory studentUserAccountId={currentUser.userAccountId} />
+//       )}
+//     </div>
+//   );
+// }
+
+
+// src/pages/paiements.tsx
+import React, { useEffect, useState } from 'react';
+import AdminDailyAttendance from '../components/AdminDailyAttendance';
+import TeacherStudentAttendance from '../components/TeacherStudentAttendance';
+import TeacherSelfAttendance from '../components/TeacherSelfAttendance';
+import StudentAttendanceHistory from '../components/StudentAttendanceHistory';
+import { AttendeeType, StudentRosterItem } from '../types/attendance';
+
+type Role = 'ADMIN' | 'TEACHER' | 'STUDENT';
+
+interface CurrentUser {
+  role: Role;
+  userAccountId: number;
+  username: string;
+  course?: string;
+}
+
+interface Props {
+  currentUser?: CurrentUser;
+  roster?: StudentRosterItem[];
+}
+
+// ─────────────────────────────────────────────────────────────
+// Normalize the role coming from AuthContext / localStorage.
+// AuthContext stores lower-case ("admin", "enseignant", "eleve"),
+// but this page compares against upper-case ("ADMIN", "TEACHER", "STUDENT").
+// ─────────────────────────────────────────────────────────────
+function normalizeRole(raw: string | undefined | null): Role {
+  const value = (raw ?? '').trim().toUpperCase();
+  if (value === 'ADMIN')                             return 'ADMIN';
+  if (value === 'TEACHER' || value === 'TITULAIRE')  return 'TEACHER';
+  if (value === 'ENSEIGNANT')                        return 'TEACHER';
+  if (value === 'ELEVE'     || value === 'ÉLÈVE')    return 'STUDENT';
+  if (value === 'STUDENT')                           return 'STUDENT';
+  return 'STUDENT';
+}
+
+// ─────────────────────────────────────────────────────────────
+// Read current user from localStorage as a fallback when no
+// prop is passed. This is what AuthContext writes on login.
+// ─────────────────────────────────────────────────────────────
+function readUserFromStorage(): CurrentUser {
+  try {
+    const raw =
+      localStorage.getItem('scolagest-auth-user') ||
+      localStorage.getItem('user');
+    if (raw) {
+      const u = JSON.parse(raw);
+      return {
+        role:          normalizeRole(u?.role),
+        userAccountId: Number(u?.id ?? u?.userAccountId ?? 0),
+        username:      String(u?.username ?? u?.email ?? ''),
+        course:        u?.course ?? u?.classe ?? '',
+      };
+    }
+  } catch {}
+  return { role: 'STUDENT', userAccountId: 0, username: '', course: '' };
+}
+
+export default function AttendancePage({ currentUser: propUser, roster }: Props) {
+  const [tab, setTab] = useState<AttendeeType>('STUDENT');
+  const [students, setStudents] = useState<StudentRosterItem[]>(roster ?? []);
+
+  // Resolve currentUser: prop takes priority, then localStorage, then default
+  const currentUser: CurrentUser = propUser ?? readUserFromStorage();
+
+  // If no roster passed as prop, try to fetch students from the API
+  useEffect(() => {
+    if (roster && roster.length > 0) {
+      setStudents(roster);
+      return;
+    }
+    // Only fetch for teachers who need a roster
+    if (currentUser.role !== 'TEACHER') return;
+
+    const token = (() => {
+      try {
+        return (
+          localStorage.getItem('scolagest-auth-token') ||
+          sessionStorage.getItem('scolagest-auth-token')
+        );
+      } catch { return null; }
+    })();
+
+    fetch('/api/students', {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(r => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        const roster: StudentRosterItem[] = (data ?? []).map(s => ({
+          studentId:          s.id,
+          fullName:           s.fullName ?? s.full_name ?? '',
+          registrationNumber: s.registrationNumber ?? s.registration_number,
+          matricule:          s.matricule ?? s.registrationNumber,
+          studentClass:       s.studentClass ?? s.student_class,
+          section:            s.section,
+          present:            undefined,
+        }));
+        setStudents(roster);
+      })
+      .catch(() => setStudents([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 16,
+        }}
+      >
+        <div>
+          <h1 style={{ fontSize: 20, margin: 0 }}>Présences</h1>
+          <p style={{ color: '#64748b', margin: '4px 0 0' }}>
+            Début des cours : 07h30
+          </p>
+        </div>
+
+        <select
+          value={tab}
+          onChange={(e) => setTab(e.target.value as AttendeeType)}
+          style={{
+            padding: '8px 12px',
+            borderRadius: 6,
+            border: '1px solid #e2e8f0',
+            fontSize: 14,
+          }}
+        >
+          <option value="STUDENT">Présence des élèves</option>
+          <option value="TEACHER">Présence des enseignants</option>
+        </select>
+      </div>
+
+      {currentUser.role === 'ADMIN' && (
+        <AdminDailyAttendance attendeeType={tab} />
+      )}
+
+      {currentUser.role === 'TEACHER' && tab === 'STUDENT' && (
+        <TeacherStudentAttendance
+          teacherUsername={currentUser.username}
+          course={currentUser.course || ''}
+          roster={students}
+        />
+      )}
+
+      {currentUser.role === 'TEACHER' && tab === 'TEACHER' && (
+        <TeacherSelfAttendance
+          teacherUsername={currentUser.username}
+          teacherUserAccountId={currentUser.userAccountId}
+        />
+      )}
+
+      {currentUser.role === 'STUDENT' && (
+        <StudentAttendanceHistory studentUserAccountId={currentUser.userAccountId} />
+      )}
+    </div>
+  );
+}

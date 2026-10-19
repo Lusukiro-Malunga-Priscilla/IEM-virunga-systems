@@ -1,0 +1,123 @@
+import React, { useEffect, useState } from 'react';
+import { attendanceApi } from '../lib/attendanceApi';
+import { AttendeeType, DailyAttendanceBox } from '../types/attendance';
+
+const STATUS_COLOR: Record<string, string> = {
+  PRESENT: '#22c55e',
+  LATE: '#f59e0b',
+  ABSENT: '#ef4444',
+  NOT_MARKED: '#cbd5e1',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  PRESENT: 'Present',
+  LATE: 'En retard',
+  ABSENT: 'Absent',
+  NOT_MARKED: 'Non pointe',
+};
+
+interface Props {
+  attendeeType: AttendeeType;
+}
+
+export default function AdminDailyAttendance({ attendeeType }: Props) {
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [course, setCourse] = useState('');
+  const [boxes, setBoxes] = useState<DailyAttendanceBox[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<DailyAttendanceBox | null>(null);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, course, attendeeType]);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await attendanceApi.getDailyBoard(date, course || undefined, attendeeType);
+      setBoxes(data);
+    } catch (e: any) {
+      setError(e.message || 'Erreur de chargement');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 18, marginBottom: 4 }}>
+        Presence du jour - {attendeeType === 'STUDENT' ? 'Eleves' : 'Enseignants'}
+      </h2>
+      <p style={{ color: '#64748b', marginBottom: 12 }}>
+        Debut des cours : 07h30. Une case verte = present a l'heure, orange = en retard
+        (justification requise), rouge = absent.
+      </p>
+
+      <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', flexDirection: 'column', fontSize: 13 }}>
+          Date
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                 style={{ padding: 8, border: '1px solid #e2e8f0', borderRadius: 6 }} />
+        </label>
+        {attendeeType === 'STUDENT' && (
+          <label style={{ display: 'flex', flexDirection: 'column', fontSize: 13 }}>
+            Classe / cours
+            <input type="text" placeholder="Ex: 6eme A" value={course}
+                   onChange={(e) => setCourse(e.target.value)}
+                   style={{ padding: 8, border: '1px solid #e2e8f0', borderRadius: 6 }} />
+          </label>
+        )}
+      </div>
+
+      {loading && <p>Chargement...</p>}
+      {error && <p style={{ color: '#ef4444' }}>{error}</p>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 10 }}>
+        {boxes.map((box) => (
+          <button
+            key={box.userAccountId}
+            onClick={() => setSelected(box)}
+            style={{
+              background: STATUS_COLOR[box.status] || '#cbd5e1',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 8,
+              padding: '14px 10px',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 14 }}>{box.fullName}</div>
+            <div style={{ fontSize: 12, opacity: 0.9 }}>{STATUS_LABEL[box.status]}</div>
+            {box.checkInTime && (
+              <div style={{ fontSize: 11, opacity: 0.85 }}>
+                {new Date(box.checkInTime).toLocaleTimeString().slice(0, 5)}
+              </div>
+            )}
+          </button>
+        ))}
+        {!loading && boxes.length === 0 && (
+          <p style={{ color: '#94a3b8' }}>Aucune donnee pour ce jour.</p>
+        )}
+      </div>
+
+      {selected && (
+        <div style={{
+          marginTop: 20, padding: 16, border: '1px solid #e2e8f0', borderRadius: 8, background: '#f8fafc',
+        }}>
+          <h3 style={{ marginTop: 0 }}>{selected.fullName}</h3>
+          <p>Statut : <strong>{STATUS_LABEL[selected.status]}</strong></p>
+          {selected.checkInTime && <p>Arrivee : {new Date(selected.checkInTime).toLocaleString()}</p>}
+          {selected.justification && <p>Justification : {selected.justification}</p>}
+          {selected.status === 'LATE' && !selected.justification && (
+            <p style={{ color: '#b45309' }}>Aucune justification fournie pour le retard.</p>
+          )}
+          <button onClick={() => setSelected(null)} style={{ marginTop: 8 }}>Fermer</button>
+        </div>
+      )}
+    </div>
+  );
+}

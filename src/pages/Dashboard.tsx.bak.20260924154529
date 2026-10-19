@@ -1,0 +1,826 @@
+// // import React from "react";
+// // import { useAuth } from "@/context/AuthContext";
+
+// // export default function Dashboard() {
+// //   const { user, logout } = useAuth();
+
+// //   return (
+// //     <div style={{ maxWidth: 1200 }}>
+// //         <h1 style={{ fontSize: 28, marginBottom: 6 }}>Tableau de bord</h1>
+// //         <p style={{ color: '#64748b' }}>Synthèse de l'établissement pour l'année scolaire 2026 — 2027.</p>
+
+// //         <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20, marginTop: 20 }}>
+// //           <div style={{ background: 'linear-gradient(180deg,#06122a,#0b2a4a)', color: '#fff', borderRadius: 14, padding: 20 }}>
+// //             <div style={{ fontSize: 12, opacity: 0.9 }}>ÉLÈVES INSCRITS</div>
+// //             <div style={{ fontSize: 40, fontWeight: 800, marginTop: 8 }}>842</div>
+// //             <div style={{ fontSize: 13, opacity: 0.8, marginTop: 8 }}>+38 cette rentrée</div>
+// //           </div>
+
+// //           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+// //             <div style={{ background: '#fff', borderRadius: 14, padding: 18, boxShadow: '0 6px 20px rgba(15,23,42,0.06)' }}>
+// //               <div style={{ fontSize: 12, color: '#94a3b8' }}>ENSEIGNANTS</div>
+// //               <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>46</div>
+// //               <div style={{ fontSize: 13, color: '#64748b', marginTop: 8 }}>8 vacataires</div>
+// //             </div>
+
+// //             <div style={{ background: '#fff', borderRadius: 14, padding: 18, boxShadow: '0 6px 20px rgba(15,23,42,0.06)' }}>
+// //               <div style={{ fontSize: 12, color: '#94a3b8' }}>MOYENNE GÉNÉRALE</div>
+// //               <div style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>13,2 / 20</div>
+// //               <div style={{ fontSize: 13, color: '#64748b', marginTop: 8 }}>+0,6 vs trimestre passé</div>
+// //             </div>
+// //           </div>
+// //         </div>
+
+// //         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 20 }}>
+// //           <div style={{ background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 6px 20px rgba(15,23,42,0.06)' }}>
+// //             <h3 style={{ margin: 0, fontSize: 16 }}>Évolution des moyennes</h3>
+// //             <p style={{ color: '#64748b', marginTop: 8 }}>Moyenne générale et taux de présence</p>
+// //           </div>
+
+// //           <div style={{ background: '#fff', borderRadius: 12, padding: 18, boxShadow: '0 6px 20px rgba(15,23,42,0.06)' }}>
+// //             <h3 style={{ margin: 0, fontSize: 16 }}>Réussite par classe</h3>
+// //             <p style={{ color: '#64748b', marginTop: 8 }}>Pourcentage d'élèves au-dessus de la moyenne</p>
+// //           </div>
+// //         </div>
+// //       </div>
+// //   );
+// // }
+
+
+// // src/pages/Dashboard.tsx — IEM Virunga admin dashboard
+// import { useAuth } from '@/context/AuthContext';
+// import {
+//   GraduationCap, Users, NotebookPen, CalendarCheck,
+//   TrendingUp, TrendingDown, ArrowUpRight,
+// } from 'lucide-react';
+
+// const BRAND = '#2563eb';
+
+// // ─────────────────────────────────────────────────────────────
+// // DATA
+// // ─────────────────────────────────────────────────────────────
+
+// const stats = [
+//   {
+//     label: 'Enseignants',
+//     value: '46',
+//     hint: '8 vacataires',
+//     icon: Users,
+//     trend: null as null | { dir: 'up' | 'down'; text: string },
+//   },
+//   {
+//     label: 'Moyenne générale',
+//     value: '13,2 / 20',
+//     hint: 'Trimestre en cours',
+//     icon: NotebookPen,
+//     trend: { dir: 'up' as const, text: '+0,6 vs trimestre passé' },
+//   },
+//   {
+//     label: 'Taux de présence',
+//     value: '94,1 %',
+//     hint: 'Moyenne sur 30 jours',
+//     icon: CalendarCheck,
+//     trend: { dir: 'down' as const, text: '−1,2 pt ce mois' },
+//   },
+//   {
+//     label: 'Classes actives',
+//     value: '28',
+//     hint: '6 niveaux',
+//     icon: GraduationCap,
+//     trend: null,
+//   },
+// ];
+
+// // Moyenne générale (sur 20) et taux de présence (%) par mois
+// const timeline = [
+//   { month: 'Sep', moyenne: 12.1, presence: 96 },
+//   { month: 'Oct', moyenne: 12.4, presence: 95 },
+//   { month: 'Nov', moyenne: 12.2, presence: 93 },
+//   { month: 'Déc', moyenne: 12.9, presence: 91 },
+//   { month: 'Jan', moyenne: 13.0, presence: 95 },
+//   { month: 'Fév', moyenne: 13.2, presence: 94 },
+// ];
+
+// const parClasse = [
+//   { classe: '6ème A', taux: 88 },
+//   { classe: '6ème B', taux: 74 },
+//   { classe: '5ème A', taux: 81 },
+//   { classe: '5ème B', taux: 69 },
+//   { classe: '4ème A', taux: 92 },
+//   { classe: '3ème A', taux: 63 },
+// ];
+
+// // ─────────────────────────────────────────────────────────────
+// // SPARKLINE (pure SVG — no chart library needed)
+// // ─────────────────────────────────────────────────────────────
+
+// function LineChart({
+//   data,
+//   accessor,
+//   min,
+//   max,
+//   color,
+// }: {
+//   data: typeof timeline;
+//   accessor: (d: typeof timeline[number]) => number;
+//   min: number;
+//   max: number;
+//   color: string;
+// }) {
+//   const w = 100;
+//   const h = 40;
+//   const points = data.map((d, i) => {
+//     const x = (i / (data.length - 1)) * w;
+//     const y = h - ((accessor(d) - min) / (max - min)) * h;
+//     return `${x},${y}`;
+//   });
+
+//   return (
+//     <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="w-full h-20">
+//       <polyline
+//         points={`0,${h} ${points.join(' ')} ${w},${h}`}
+//         fill={color}
+//         fillOpacity="0.08"
+//         stroke="none"
+//       />
+//       <polyline
+//         points={points.join(' ')}
+//         fill="none"
+//         stroke={color}
+//         strokeWidth="1.5"
+//         strokeLinecap="round"
+//         strokeLinejoin="round"
+//         vectorEffect="non-scaling-stroke"
+//       />
+//     </svg>
+//   );
+// }
+
+// // ─────────────────────────────────────────────────────────────
+
+// export default function Dashboard() {
+//   const { user } = useAuth();
+//   const firstName = user?.name?.split(' ')[0] || '';
+
+//   return (
+//     <div className="max-w-[1200px] p-6 space-y-6">
+//       {/* ── Header ──────────────────────────────────────────── */}
+//       <div className="flex flex-wrap items-end justify-between gap-4">
+//         <div>
+//           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+//             Tableau de bord
+//           </h1>
+//           <p className="text-sm text-gray-500 mt-1">
+//             {firstName ? `Bonjour ${firstName} — s` : 'S'}ynthèse de l'établissement
+//             pour l'année scolaire 2026 — 2027.
+//           </p>
+//         </div>
+//         <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700">
+//           Année 2026 — 2027
+//         </span>
+//       </div>
+
+//       {/* ── Hero + stat grid ────────────────────────────────── */}
+//       <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1.4fr] gap-5">
+//         {/* Hero card */}
+//         <div
+//           className="rounded-2xl p-6 text-white flex flex-col justify-between min-h-[200px]"
+//           style={{ background: 'linear-gradient(160deg,#06122a,#0b2a4a)' }}
+//         >
+//           <div className="flex items-start justify-between">
+//             <span className="text-[11px] font-bold uppercase tracking-wider opacity-70">
+//               Élèves inscrits
+//             </span>
+//             <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center">
+//               <GraduationCap className="w-4 h-4" />
+//             </div>
+//           </div>
+
+//           <div>
+//             <div className="text-5xl font-extrabold tracking-tight">842</div>
+//             <div className="flex items-center gap-1.5 mt-3 text-sm text-emerald-300">
+//               <ArrowUpRight className="w-4 h-4" />
+//               <span className="font-medium">+38 cette rentrée</span>
+//             </div>
+//           </div>
+
+//           <div className="flex gap-6 pt-4 mt-4 border-t border-white/10">
+//             <div>
+//               <div className="text-lg font-bold">51 %</div>
+//               <div className="text-[11px] opacity-60">Filles</div>
+//             </div>
+//             <div>
+//               <div className="text-lg font-bold">49 %</div>
+//               <div className="text-[11px] opacity-60">Garçons</div>
+//             </div>
+//             <div>
+//               <div className="text-lg font-bold">30</div>
+//               <div className="text-[11px] opacity-60">Élèves / classe</div>
+//             </div>
+//           </div>
+//         </div>
+
+//         {/* Stat cards */}
+//         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+//           {stats.map(stat => (
+//             <div
+//               key={stat.label}
+//               className="bg-white rounded-xl border border-gray-200 p-4 hover:shadow-md transition-shadow"
+//             >
+//               <div className="flex items-start justify-between">
+//                 <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400">
+//                   {stat.label}
+//                 </span>
+//                 <div
+//                   className="w-8 h-8 rounded-lg flex items-center justify-center"
+//                   style={{ backgroundColor: `${BRAND}14` }}
+//                 >
+//                   <stat.icon className="w-4 h-4" style={{ color: BRAND }} />
+//                 </div>
+//               </div>
+
+//               <div className="text-2xl font-bold text-gray-900 mt-3">
+//                 {stat.value}
+//               </div>
+
+//               {stat.trend ? (
+//                 <div
+//                   className={`flex items-center gap-1 mt-1.5 text-xs font-medium ${
+//                     stat.trend.dir === 'up' ? 'text-emerald-600' : 'text-red-500'
+//                   }`}
+//                 >
+//                   {stat.trend.dir === 'up' ? (
+//                     <TrendingUp className="w-3.5 h-3.5" />
+//                   ) : (
+//                     <TrendingDown className="w-3.5 h-3.5" />
+//                   )}
+//                   {stat.trend.text}
+//                 </div>
+//               ) : (
+//                 <div className="text-xs text-gray-500 mt-1.5">{stat.hint}</div>
+//               )}
+//             </div>
+//           ))}
+//         </div>
+//       </div>
+
+//       {/* ── Charts ──────────────────────────────────────────── */}
+//       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+//         {/* Évolution */}
+//         <div className="bg-white rounded-xl border border-gray-200 p-5">
+//           <h3 className="text-base font-semibold text-gray-900">
+//             Évolution des moyennes
+//           </h3>
+//           <p className="text-sm text-gray-500 mt-1">
+//             Moyenne générale et taux de présence
+//           </p>
+
+//           <div className="mt-5 space-y-5">
+//             <div>
+//               <div className="flex items-baseline justify-between mb-1">
+//                 <span className="text-xs font-medium text-gray-600">
+//                   Moyenne générale
+//                 </span>
+//                 <span className="text-sm font-bold text-gray-900">13,2 / 20</span>
+//               </div>
+//               <LineChart
+//                 data={timeline}
+//                 accessor={d => d.moyenne}
+//                 min={11}
+//                 max={14}
+//                 color={BRAND}
+//               />
+//             </div>
+
+//             <div>
+//               <div className="flex items-baseline justify-between mb-1">
+//                 <span className="text-xs font-medium text-gray-600">
+//                   Taux de présence
+//                 </span>
+//                 <span className="text-sm font-bold text-gray-900">94,1 %</span>
+//               </div>
+//               <LineChart
+//                 data={timeline}
+//                 accessor={d => d.presence}
+//                 min={88}
+//                 max={98}
+//                 color="#10b981"
+//               />
+//             </div>
+//           </div>
+
+//           <div className="flex justify-between mt-2 pt-3 border-t border-gray-100">
+//             {timeline.map(t => (
+//               <span key={t.month} className="text-[11px] text-gray-400">
+//                 {t.month}
+//               </span>
+//             ))}
+//           </div>
+//         </div>
+
+//         {/* Réussite par classe */}
+//         <div className="bg-white rounded-xl border border-gray-200 p-5">
+//           <h3 className="text-base font-semibold text-gray-900">
+//             Réussite par classe
+//           </h3>
+//           <p className="text-sm text-gray-500 mt-1">
+//             Pourcentage d'élèves au-dessus de la moyenne
+//           </p>
+
+//           <div className="mt-5 space-y-3.5">
+//             {parClasse.map(c => (
+//               <div key={c.classe}>
+//                 <div className="flex items-center justify-between mb-1.5">
+//                   <span className="text-xs font-medium text-gray-700">
+//                     {c.classe}
+//                   </span>
+//                   <span className="text-xs font-bold text-gray-900">
+//                     {c.taux} %
+//                   </span>
+//                 </div>
+//                 <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+//                   <div
+//                     className="h-full rounded-full transition-all duration-500"
+//                     style={{
+//                       width: `${c.taux}%`,
+//                       backgroundColor: c.taux >= 80 ? '#10b981' : c.taux >= 70 ? BRAND : '#f59e0b',
+//                     }}
+//                   />
+//                 </div>
+//               </div>
+//             ))}
+//           </div>
+
+//           <div className="flex items-center gap-4 mt-5 pt-3 border-t border-gray-100">
+//             <span className="flex items-center gap-1.5 text-[11px] text-gray-500">
+//               <span className="w-2 h-2 rounded-full bg-emerald-500" /> ≥ 80 %
+//             </span>
+//             <span className="flex items-center gap-1.5 text-[11px] text-gray-500">
+//               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: BRAND }} /> 70 – 79 %
+//             </span>
+//             <span className="flex items-center gap-1.5 text-[11px] text-gray-500">
+//               <span className="w-2 h-2 rounded-full bg-amber-500" /> &lt; 70 %
+//             </span>
+//           </div>
+//         </div>
+//       </div>
+//     </div>
+//   );
+// }
+
+
+// src/pages/Dashboard.tsx — IEM Virunga admin dashboard
+// NOTE: intentionally uses NO Tailwind classes. All styling is inline or in the
+// scoped <style> block below, so it renders correctly even if the CSS pipeline
+// is broken.
+import { useMemo } from 'react';
+import { useAuth } from '@/context/AuthContext';
+import {
+  Search, Bell, Users, GraduationCap, CreditCard,
+  TrendingUp, FileBarChart,
+} from 'lucide-react';
+
+// ─────────────────────────────────────────────────────────────
+// THEME
+// ─────────────────────────────────────────────────────────────
+
+const T = {
+  navy:      '#0B1B3A',
+  navyGrad:  'linear-gradient(135deg, #0F2547 0%, #060F22 100%)',
+  brand:     '#1E40AF',
+  page:      '#F7F8FB',
+  card:      '#FFFFFF',
+  border:    '#E8EAF0',
+  text:      '#0F172A',
+  muted:     '#64748B',
+  faint:     '#94A3B8',
+  green:     '#10B981',
+  amber:     '#F59E0B',
+  shadow:    '0 1px 3px rgba(15,23,42,0.04), 0 8px 24px rgba(15,23,42,0.04)',
+};
+
+// ─────────────────────────────────────────────────────────────
+// DATA  ← replace these with your API data
+// ─────────────────────────────────────────────────────────────
+
+const kpis = [
+  { label: 'Enseignants',      value: '46',         hint: '8 vacataires',           icon: GraduationCap },
+  { label: 'Frais encaissés',  value: '128 400 $',  hint: '72 % du prévisionnel',   icon: CreditCard    },
+  { label: 'Moyenne générale', value: '13,2 / 20',  hint: '+0,6 vs trimestre passé', icon: TrendingUp   },
+];
+
+const timeline = [
+  { month: 'Sep', moyenne: 12.1, presence: 96 },
+  { month: 'Oct', moyenne: 12.4, presence: 95 },
+  { month: 'Nov', moyenne: 12.2, presence: 93 },
+  { month: 'Déc', moyenne: 12.9, presence: 91 },
+  { month: 'Jan', moyenne: 13.0, presence: 95 },
+  { month: 'Fév', moyenne: 13.2, presence: 94 },
+];
+
+const parClasse = [
+  { classe: '6ème A', taux: 88 },
+  { classe: '6ème B', taux: 74 },
+  { classe: '5ème A', taux: 81 },
+  { classe: '5ème B', taux: 69 },
+  { classe: '4ème A', taux: 92 },
+  { classe: '3ème A', taux: 63 },
+];
+
+// ─────────────────────────────────────────────────────────────
+// SCOPED CSS
+// ─────────────────────────────────────────────────────────────
+
+const CSS = `
+.iemv-dash, .iemv-dash * { box-sizing: border-box; }
+.iemv-dash { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+.iemv-search:focus { outline: none; border-color: ${T.brand}; box-shadow: 0 0 0 3px rgba(30,64,175,0.10); }
+
+.iemv-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: ${T.navy}; color: #fff; border: 0; cursor: pointer;
+  padding: 12px 22px; border-radius: 12px;
+  font-size: 14px; font-weight: 600; font-family: inherit;
+  transition: transform .12s ease, opacity .12s ease;
+}
+.iemv-btn:hover { opacity: .92; transform: translateY(-1px); }
+
+.iemv-iconbtn {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 12px;
+  background: ${T.card}; border: 1px solid ${T.border};
+  cursor: pointer; color: ${T.muted};
+  transition: background .12s ease;
+}
+.iemv-iconbtn:hover { background: #F1F3F8; }
+
+.iemv-card { transition: box-shadow .15s ease, transform .15s ease; }
+.iemv-card:hover { box-shadow: 0 4px 12px rgba(15,23,42,0.07), 0 16px 40px rgba(15,23,42,0.06); }
+
+.iemv-grid-kpi { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.iemv-grid-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 900px) {
+  .iemv-grid-kpi, .iemv-grid-charts { grid-template-columns: 1fr; }
+  .iemv-topbar { flex-direction: column; align-items: stretch !important; }
+}
+`;
+
+// ─────────────────────────────────────────────────────────────
+// SPARKLINE
+// ─────────────────────────────────────────────────────────────
+
+function Sparkline({
+  values, min, max, color,
+}: { values: number[]; min: number; max: number; color: string }) {
+  const w = 300, h = 70;
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - ((v - min) / (max - min)) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ width: '100%', height: 70, display: 'block' }}>
+      <polyline points={`0,${h} ${pts.join(' ')} ${w},${h}`} fill={color} fillOpacity="0.09" stroke="none" />
+      <polyline
+        points={pts.join(' ')}
+        fill="none" stroke={color} strokeWidth="2.5"
+        strokeLinecap="round" strokeLinejoin="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const { user } = useAuth();
+
+  const initials = useMemo(() => {
+    const n = user?.name?.trim();
+    if (!n) return 'DG';
+    const p = n.split(/\s+/);
+    return ((p[0]?.[0] || '') + (p[1]?.[0] || '')).toUpperCase() || 'DG';
+  }, [user?.name]);
+
+  const displayName = user?.name || 'Direction générale';
+
+  const cardBase: React.CSSProperties = {
+    background: T.card,
+    border: `1px solid ${T.border}`,
+    borderRadius: 18,
+    boxShadow: T.shadow,
+  };
+
+  const chipStyle: React.CSSProperties = {
+    width: 42, height: 42, borderRadius: 12,
+    background: '#EFF3FB',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
+  };
+
+  return (
+    <>
+      <style>{CSS}</style>
+
+      <div
+        className="iemv-dash"
+        style={{ flex: 1, minWidth: 0, background: T.page, minHeight: '100vh' }}
+      >
+        {/* ── Top bar ─────────────────────────────────────── */}
+        <div
+          className="iemv-topbar"
+          style={{
+            display: 'flex', alignItems: 'center', gap: 16,
+            padding: '18px 32px',
+            background: T.card,
+            borderBottom: `1px solid ${T.border}`,
+          }}
+        >
+          <div style={{ position: 'relative', flex: 1, maxWidth: 680 }}>
+            <Search
+              size={18}
+              style={{
+                position: 'absolute', left: 16, top: '50%',
+                transform: 'translateY(-50%)', color: T.faint,
+              }}
+            />
+            <input
+              className="iemv-search"
+              placeholder="Rechercher un élève, un cours, un paiement…"
+              style={{
+                width: '100%', height: 48,
+                padding: '0 16px 0 46px',
+                borderRadius: 12,
+                border: `1px solid ${T.border}`,
+                background: '#FBFCFE',
+                fontSize: 14, color: T.text,
+                fontFamily: 'inherit',
+                transition: 'border-color .15s ease, box-shadow .15s ease',
+              }}
+            />
+          </div>
+
+          <button className="iemv-iconbtn" title="Notifications">
+            <Bell size={19} />
+            <span
+              style={{
+                position: 'absolute', top: 10, right: 11,
+                width: 8, height: 8, borderRadius: '50%',
+                background: '#EF4444',
+                border: `2px solid ${T.card}`,
+              }}
+            />
+          </button>
+
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '8px 18px 8px 8px',
+              background: T.card,
+              border: `1px solid ${T.border}`,
+              borderRadius: 14,
+              flexShrink: 0,
+            }}
+          >
+            <div
+              style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: T.navy, color: '#fff',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 14, fontWeight: 700,
+              }}
+            >
+              {initials}
+            </div>
+            <div style={{ lineHeight: 1.3 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: T.text }}>
+                {displayName}
+              </div>
+              <div style={{ fontSize: 12.5, color: T.muted }}>
+                Année scolaire 2026 — 2027
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Content ─────────────────────────────────────── */}
+        <div style={{ padding: 32, maxWidth: 1400 }}>
+          {/* Title row */}
+          <div
+            style={{
+              display: 'flex', alignItems: 'flex-start',
+              justifyContent: 'space-between', gap: 20,
+              flexWrap: 'wrap', marginBottom: 28,
+            }}
+          >
+            <div>
+              <h1
+                style={{
+                  margin: 0, fontSize: 34, fontWeight: 800,
+                  color: T.text, letterSpacing: '-0.02em',
+                }}
+              >
+                Tableau de bord
+              </h1>
+              <p style={{ margin: '8px 0 0', fontSize: 15, color: T.muted }}>
+                Synthèse de l'établissement pour l'année scolaire 2026 — 2027.
+              </p>
+            </div>
+
+            <button className="iemv-btn">
+              <FileBarChart size={17} strokeWidth={2} />
+              Générer un rapport
+            </button>
+          </div>
+
+          {/* KPI grid */}
+          <div className="iemv-grid-kpi" style={{ marginBottom: 20 }}>
+            {/* Hero card */}
+            <div
+              className="iemv-card"
+              style={{
+                background: T.navyGrad,
+                borderRadius: 18,
+                padding: 28,
+                color: '#fff',
+                minHeight: 218,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <span
+                  style={{
+                    fontSize: 12.5, fontWeight: 700,
+                    letterSpacing: '0.09em', textTransform: 'uppercase',
+                    color: 'rgba(255,255,255,0.72)',
+                  }}
+                >
+                  Élèves inscrits
+                </span>
+                <div
+                  style={{
+                    width: 42, height: 42, borderRadius: 12,
+                    background: 'rgba(255,255,255,0.10)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <Users size={20} strokeWidth={2} />
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 52, fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1 }}>
+                  842
+                </div>
+                <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.65)', marginTop: 12 }}>
+                  +38 cette rentrée
+                </div>
+              </div>
+            </div>
+
+            {/* Three white KPI cards */}
+            {kpis.map(kpi => (
+              <div
+                key={kpi.label}
+                className="iemv-card"
+                style={{
+                  ...cardBase,
+                  padding: 28,
+                  minHeight: 218,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <span
+                    style={{
+                      fontSize: 12.5, fontWeight: 700,
+                      letterSpacing: '0.09em', textTransform: 'uppercase',
+                      color: T.muted,
+                    }}
+                  >
+                    {kpi.label}
+                  </span>
+                  <div style={chipStyle}>
+                    <kpi.icon size={20} strokeWidth={2} style={{ color: T.navy }} />
+                  </div>
+                </div>
+
+                <div>
+                  <div
+                    style={{
+                      fontSize: 44, fontWeight: 800,
+                      letterSpacing: '-0.03em', lineHeight: 1, color: T.text,
+                    }}
+                  >
+                    {kpi.value}
+                  </div>
+                  <div style={{ fontSize: 14, color: T.muted, marginTop: 12 }}>
+                    {kpi.hint}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Charts */}
+          <div className="iemv-grid-charts">
+            {/* Évolution des moyennes */}
+            <div className="iemv-card" style={{ ...cardBase, padding: 26 }}>
+              <h3 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: T.text, letterSpacing: '-0.01em' }}>
+                Évolution des moyennes
+              </h3>
+              <p style={{ margin: '6px 0 0', fontSize: 14, color: T.muted }}>
+                Moyenne générale et taux de présence
+              </p>
+
+              <div style={{ marginTop: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: T.muted }}>Moyenne générale</span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: T.text }}>13,2 / 20</span>
+                </div>
+                <Sparkline values={timeline.map(t => t.moyenne)} min={11} max={14} color={T.brand} />
+              </div>
+
+              <div style={{ marginTop: 22 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: T.muted }}>Taux de présence</span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: T.text }}>94,1 %</span>
+                </div>
+                <Sparkline values={timeline.map(t => t.presence)} min={88} max={98} color={T.green} />
+              </div>
+
+              <div
+                style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  marginTop: 14, paddingTop: 14,
+                  borderTop: `1px solid ${T.border}`,
+                }}
+              >
+                {timeline.map(t => (
+                  <span key={t.month} style={{ fontSize: 12, color: T.faint }}>{t.month}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* Réussite par classe */}
+            <div className="iemv-card" style={{ ...cardBase, padding: 26 }}>
+              <h3 style={{ margin: 0, fontSize: 19, fontWeight: 700, color: T.text, letterSpacing: '-0.01em' }}>
+                Réussite par classe
+              </h3>
+              <p style={{ margin: '6px 0 0', fontSize: 14, color: T.muted }}>
+                Pourcentage d'élèves au-dessus de la moyenne
+              </p>
+
+              <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                {parClasse.map(c => (
+                  <div key={c.classe}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 7 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{c.classe}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{c.taux} %</span>
+                    </div>
+                    <div style={{ height: 8, borderRadius: 99, background: '#EEF1F6', overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          height: '100%', width: `${c.taux}%`, borderRadius: 99,
+                          background: c.taux >= 80 ? T.green : c.taux >= 70 ? T.brand : T.amber,
+                          transition: 'width .5s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: 'flex', gap: 18,
+                  marginTop: 22, paddingTop: 14,
+                  borderTop: `1px solid ${T.border}`,
+                }}
+              >
+                {[
+                  { c: T.green, l: '≥ 80 %' },
+                  { c: T.brand, l: '70 – 79 %' },
+                  { c: T.amber, l: '< 70 %' },
+                ].map(x => (
+                  <span key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: T.muted }}>
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: x.c }} />
+                    {x.l}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

@@ -1,0 +1,25 @@
+// Stub teacher API — replace with real implementation when backend is ready.
+
+export class ApiError extends Error {
+  status?: number;
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function notImplemented(name: string): Promise<never> {
+  throw new ApiError(`${name} is not implemented yet`, 501);
+}
+
+export const teacherApi = {
+  list:           () => notImplemented('teacherApi.list'),
+  get:            (_id: number) => notImplemented('teacherApi.get'),
+  create:         (_payload: unknown) => notImplemented('teacherApi.create'),
+  update:         (_id: number, _payload: unknown) => notImplemented('teacherApi.update'),
+  remove:         (_id: number) => notImplemented('teacherApi.remove'),
+  listClasses:    () => notImplemented('teacherApi.listClasses'),
+  listStudents:   () => notImplemented('teacherApi.listStudents'),
+  listCourses:    () => notImplemented('teacherApi.listCourses'),
+};

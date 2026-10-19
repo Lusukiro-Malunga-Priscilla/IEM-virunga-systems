@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+.output/
+.tanstack/
+.wrangler/
+coverage/
+.vite/
+.env
+.env.*
+!.env.example
