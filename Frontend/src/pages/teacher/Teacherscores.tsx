@@ -1,4 +1,4 @@
-﻿// // import { useState, useEffect } from "react";
+// // import { useState, useEffect } from "react";
 
 // // const KEY = "feuille-notes-examen-iem-virunga";
 // // const COURSES = [
@@ -248,12 +248,12 @@
 //     if (!classe) return;
 //     loadStudents().then((students) => {
 //       const inClass = students.filter((s: any) => {
-        const sClasse  = s.classe ?? "";
-        const sSection = s.section ?? null;
-        if (sClasse !== classe) return false;
-        if (sSection && sSection !== section) return false;
-        return true;
-      });
+//         const sClasse  = s.classe ?? "";
+//         const sSection = s.section ?? null;
+//         if (sClasse !== classe) return false;
+//         if (sSection && sSection !== section) return false;
+//         return true;
+//       });
 //       let savedData: any = null;
 //       try {
 //         const raw = localStorage.getItem(storageKey);

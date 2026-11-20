@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { fetchAllAnnouncements } from "@/api/announcementApi";
 import { useAuth } from "@/context/AuthContext";
 
@@ -81,7 +81,7 @@ export default function TeacherAnnouncementsPage() {
               key={a.id}
               onClick={() => markRead(a.id)}
               style={{
-                border: 1px solid ,
+                border: "1px solid #e2e8f0",
                 background: isUnread ? "#f5f8ff" : "#fff",
                 borderRadius: 12, padding: 16, cursor: "pointer",
                 boxShadow: isUnread ? "0 2px 6px rgba(29,59,120,.08)" : "none",

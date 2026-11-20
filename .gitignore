@@ -1,3 +1,4 @@
+# ---- Frontend ----
 node_modules/
 dist/
 build/
@@ -6,6 +7,25 @@ build/
 .wrangler/
 coverage/
 .vite/
+
+# ---- Backend ----
+target/
+*.class
+*.jar
+*.war
+!**/src/main/resources/*.jar
+
+# ---- Environment / Secrets ----
 .env
 .env.*
 !.env.example
+
+# ---- Docker ----
+docker-compose.override.yml
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo

@@ -1,0 +1,16 @@
+node_modules
+dist
+.output
+.tanstack
+.wrangler
+.vite
+coverage
+.env
+.env.*
+!.env.example
+*.md
+.git
+.prettierrc
+.prettierignore
+fix-bulletin.ps1
+AGENTS.md
